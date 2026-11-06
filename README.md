@@ -70,22 +70,20 @@ Claude SSH opens SSH **for one session**, on your terms:
 
 ```mermaid
 flowchart LR
-    A["AI agent on the workstation<br/>(holds the private key)"]
-    FW["Firewall rule<br/>port 2222, AllowIp only"]
-    S["sshd.exe, portable<br/>runs as you, keys only"]
-    W["cmdlog.ps1<br/>records command, stdin, files"]
-    C["cmd.exe /c command"]
-    P["programs it starts"]
-    L[("session log<br/>%LOCALAPPDATA%\ClaudeSSH\logs")]
-    V["claude-ssh window<br/>shows everything, live"]
-    A -- "ssh -p 2222" --> FW
-    FW --> S
+    A["AI agent<br/>holds the private key"]
+    subgraph SRV["Your Windows server"]
+        S["sshd.exe, portable<br/>runs as you"]
+        W["cmdlog.ps1<br/>records the command"]
+        C["cmd.exe /c command<br/>and programs it starts"]
+        L[("session log")]
+        V["claude-ssh window<br/>shows it all, live"]
+    end
+    A -- "ssh, port 2222<br/>AllowIp only" --> S
     S --> W
     W --> C
-    C --> P
-    W -. "CMD · DEC · IN · FILE · EXIT" .-> L
-    P -. "PROC (process watch)" .-> L
-    L -. "printed in color" .-> V
+    W -. "CMD DEC IN<br/>FILE EXIT" .-> L
+    C -. "PROC" .-> L
+    L -.-> V
 ```
 
 ## Problems it solves
