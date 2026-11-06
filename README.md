@@ -24,8 +24,6 @@ claude-ssh.bat
 ssh -i ~/.ssh/claude-access_ed25519 -p 2222 admin@198.51.100.7 "hostname"
 ```
 
-[Русская версия](README.ru.md)
-
 **Why people use it**
 - 📦 **Nothing to install.** Microsoft's portable OpenSSH runs straight from the folder: no
   Windows feature, no service, no reboot. The system sshd on port 22, if there is one, is not touched.
