@@ -148,6 +148,8 @@ public static class ClaudeSshJob {
 }
 
 # Everything started from this window (sshd, sessions, Claude's commands) - by process tree.
+# Not the conhost.exe of this window itself (an elevated window owns one): killing it would
+# take the window away before it says what happened.
 function Stop-Descendants {
     $all = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)
     $found = New-Object System.Collections.Generic.List[int]
@@ -157,6 +159,7 @@ function Stop-Descendants {
         $parent = $queue.Dequeue()
         foreach ($p in $all) {
             $id = [int]$p.ProcessId
+            if ($parent -eq $PID -and "$($p.Name)" -eq 'conhost.exe') { continue }
             if ($p.ParentProcessId -eq $parent -and $id -ne $PID -and -not $found.Contains($id)) {
                 $found.Add($id); $queue.Enqueue($id)
             }
@@ -248,13 +251,25 @@ function Initialize-DataDir {
 }
 
 # ---------------------------------------------------------------- session log
-# One line per record: "HH:mm:ss #<id> TAG text". cmdlog.ps1 (one per command, <id> = its
-# PID) and this window (PROC records) append to the same file; the window prints new lines.
+# One line per record: "yyyy-MM-dd HH:mm:ss #<id> TAG text". cmdlog.ps1 (one per command,
+# <id> = its PID) and this window (SSH, PROC and NOTE records, <id> 0 for the server itself)
+# append to the same file; the window prints new lines, except the output of commands.
+$LogHeader = @(
+    '# Claude SSH session log. One record per line: date time #id TAG text',
+    '# #id = one command (the PID of its cmdlog.ps1), #0 = the server itself',
+    '# SSH  sshd: connections, logins (with key fingerprint), failed attempts, disconnects',
+    '# CMD  command line and client IP      DEC  decoded powershell -EncodedCommand',
+    '# IN   text sent on stdin (scripts)    OUT, ERR  what the command printed (stdout, stderr)',
+    '# PROC programs the command started    FILE files it wrote, with content',
+    '# EXIT exit code and run time          NOTE everything else',
+    '# "| text" lines continue the record above them. Long text is cut at 1 MB per command.'
+)
 
 function Write-LogRecord {
-    param([string]$Id, [string]$Tag, [string[]]$Lines)
+    param([string]$Id, [string]$Tag, [string[]]$Lines, $Time = $null)
     if (-not $script:SessionLog -or -not $Lines) { return }
-    $stamp = Get-Date -Format 'HH:mm:ss'
+    if (-not $Time) { $Time = Get-Date }
+    $stamp = $Time.ToString('yyyy-MM-dd HH:mm:ss')
     $sb = New-Object Text.StringBuilder
     foreach ($l in $Lines) {
         $one = "$l" -replace "[\r\n]+", ' '
@@ -294,8 +309,14 @@ function Format-ForConsole {
     return $s
 }
 
-$TagColors = @{ CMD = 'Yellow'; DEC = 'DarkYellow'; IN = 'Cyan'; FILE = 'Green'; PROC = 'Magenta'; EXIT = 'DarkGray'; NOTE = 'DarkGray' }
+$TagColors = @{ CMD = 'Yellow'; DEC = 'DarkYellow'; IN = 'Cyan'; FILE = 'Green'; PROC = 'Magenta'; EXIT = 'DarkGray'; NOTE = 'DarkGray'; SSH = 'DarkGray' }
+$WindowHides = @{ OUT = $true; ERR = $true }   # in the log only: the window would drown in it
+# sshd lines that mean someone did not get in (or something broke): red. Logins: white.
+$SshBad = '(?i)failed|invalid user|refused|not allowed|authenticating user|maximum authentication|unable to negotiate|bad protocol|^error: |penali'
+# Routine sshd lines of every command: in the log only (a login line per command stays).
+$SshRoutine = '^(Connection from |Accepted key |User child is on pid )|Postponed publickey|Starting session: |Close session: |Received disconnect from |Disconnected from .*\[postauth\]|Read error from remote host .*\[postauth\]|Transferred: '
 $script:BlockKey = ''; $script:BlockCount = 0; $script:BlockHidden = 0
+$script:Running = @{}   # commands with a CMD record and no EXIT yet: id -> start time
 
 function Complete-Block {
     if ($script:BlockHidden -gt 0) {
@@ -306,9 +327,15 @@ function Complete-Block {
 
 function Show-LogLine {
     param([string]$Line)
-    if ($Line -notmatch '^(\d\d:\d\d:\d\d) #(\d+) (\w+)\s+(.*)$') { Complete-Block; Write-Host $Line; return }
+    $Line = $Line.TrimStart([char]0xFEFF)
+    if ($Line.StartsWith('#')) { return }   # the header
+    if ($Line -notmatch '^(?:\d{4}-\d\d-\d\d )?(\d\d:\d\d:\d\d) #(\d+) (\w+)\s+(.*)$') { Complete-Block; Write-Host $Line; return }
     $time = $Matches[1]; $id = $Matches[2]; $tag = $Matches[3]; $text = $Matches[4]
-    if ($id -eq '0' -and $tag -ne 'PROC') { return }   # this window's own notes: already printed
+    if ($tag -eq 'CMD' -and -not $text.StartsWith('|')) { $script:Running[$id] = $time }
+    if ($tag -eq 'EXIT') { $script:Running.Remove($id) }
+    if ($id -eq '0' -and $tag -ne 'PROC' -and $tag -ne 'SSH') { return }   # this window's own notes: already printed
+    if ($WindowHides.ContainsKey($tag)) { return }
+    if ($tag -eq 'SSH' -and $text -match $SshRoutine -and $text -notmatch $SshBad) { return }
     # A block = a header line plus its "| ..." lines: show the first lines only.
     $key = "$id/$tag"
     if (-not $text.StartsWith('|') -or $key -ne $script:BlockKey) {
@@ -319,7 +346,54 @@ function Show-LogLine {
     $color = 'Gray'
     if ($TagColors.ContainsKey($tag)) { $color = $TagColors[$tag] }
     if ($tag -eq 'EXIT' -and $text -notmatch '^0 ') { $color = 'Red' }
-    Write-Host ('  {0} #{1,-5} {2,-4} {3}' -f $time, $id, $tag, (Format-ForConsole $text)) -ForegroundColor $color
+    if ($tag -eq 'SSH') {
+        if ($text -match $SshBad) { $color = 'Red' } elseif ($text -match '^Accepted publickey') { $color = 'White' }
+    }
+    $who = ''
+    if ($id -ne '0') { $who = "#$id" }
+    Write-Host ('  {0} {1,-6} {2,-4} {3}' -f $time, $who, $tag, (Format-ForConsole $text)) -ForegroundColor $color
+}
+
+# ---------------------------------------------------------------- sshd messages
+# sshd (and the per-connection processes it starts) write to its stderr, a pipe read by
+# .NET in the background: every line becomes an event, here turned into an SSH record.
+$SshdSource = 'ClaudeSshSshd'
+
+function Start-Sshd {
+    param([string]$ConfigPath)
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = Join-Path $Bin 'sshd.exe'
+    $psi.Arguments = '-D -e -f "{0}"' -f $ConfigPath
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardError = $true
+    $psi.StandardErrorEncoding = New-Object Text.UTF8Encoding($false)
+    $proc = New-Object Diagnostics.Process
+    $proc.StartInfo = $psi
+    Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived -SourceIdentifier $SshdSource | Out-Null
+    [void]$proc.Start()
+    $proc.BeginErrorReadLine()
+    return $proc
+}
+
+function Update-SshdLog {
+    foreach ($ev in @(Get-Event -SourceIdentifier $SshdSource -ErrorAction SilentlyContinue)) {
+        Remove-Event -EventIdentifier $ev.EventIdentifier -ErrorAction SilentlyContinue
+        $line = $ev.SourceEventArgs.Data
+        if (-not $line) { continue }   # $null = end of the stream
+        Write-LogRecord -Id 0 -Tag 'SSH' -Lines @($line.TrimEnd()) -Time $ev.TimeGenerated
+    }
+}
+
+function Stop-SshdLog {
+    Unregister-Event -SourceIdentifier $SshdSource -ErrorAction SilentlyContinue
+    Remove-Event -SourceIdentifier $SshdSource -ErrorAction SilentlyContinue
+}
+
+# Everything new: sshd messages into the log, then the log into the window.
+function Update-Window {
+    Update-SshdLog
+    foreach ($line in @(Read-NewLogLines)) { Show-LogLine $line }
+    Complete-Block
 }
 
 # ---------------------------------------------------------------- process watch
@@ -538,7 +612,8 @@ try {
 
     # ---- session log (kept) and sshd config (this session only)
     $script:SessionLog = Join-Path $LogDir ('session-{0:yyyyMMdd-HHmmss}.log' -f (Get-Date))
-    Set-Content -Path $script:SessionLog -Value '' -Encoding Ascii -NoNewline
+    # UTF-8 with a BOM, so Windows PowerShell 5.1 and old editors read non-English text right.
+    [IO.File]::WriteAllText($script:SessionLog, (($LogHeader -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding($true)))
     $script:LogPos = 0L
     $cfg = Join-Path $Work 'sshd_config'
     @(
@@ -571,7 +646,7 @@ try {
         Say ("Firewall: port {0} open for {1}" -f $Port, ($ips -join ', ')) Green
     }
 
-    # ---- start sshd as a child of this window (its log goes straight to this console)
+    # ---- start sshd as a child of this window (its messages go to the session log and here)
     try {
         Enable-KillOnClose
         Say 'Closing this window will kill sshd and every SSH session started from it.' Green
@@ -580,11 +655,11 @@ try {
     }
     Start-ProcWatch
     $env:PATH = "$Bin;$env:PATH"
-    $sshd = Start-Process -FilePath (Join-Path $Bin 'sshd.exe') -NoNewWindow -PassThru `
-        -ArgumentList ('-D -e -f "{0}"' -f $cfg)
+    $sshd = Start-Sshd $cfg
     $script:ProcTree[[int]$sshd.Id] = @{ Role = 'sshd'; Owner = 0; Depth = 0; Interactive = $false
                                          Start = $sshd.StartTime; Added = (Get-Date) }
     Start-Sleep -Seconds 1
+    Update-Window
     if ($sshd.HasExited) { throw ("sshd exited at start (code {0}), see its messages above." -f $sshd.ExitCode) }
 
     $fp = (& (Join-Path $Bin 'ssh-keygen.exe') -l -f "$hostKey.pub" | Out-String).Trim()
@@ -601,8 +676,9 @@ try {
     Say ("Allowed: {0} key(s) from {1}, from {2}" -f $pubKeys.Count, $KeysList, ($ips -join ', '))
     Say ("Host key: {0}" -f $fp)
     Say ("Session log: {0}" -f $script:SessionLog)
+    Say '  it keeps everything below with dates, plus what each command printed (OUT, ERR: not shown here)'
     Say ("Started processes: {0}" -f $procNote)
-    Say 'Below: CMD yellow, decoded DEC dark yellow, stdin scripts IN cyan, PROC magenta, FILE green, EXIT.'
+    Say 'Below: SSH logins (failed: red), CMD yellow, DEC dark yellow, IN cyan, PROC magenta, FILE green, EXIT.'
     Write-Host ''
     Write-LogRecord -Id 0 -Tag 'NOTE' -Lines @(
         ('SSH open until {0:yyyy-MM-dd HH:mm} as {1}, port {2}, from {3}' -f $deadline, $me, $Port, ($ips -join ', ')),
@@ -614,17 +690,12 @@ try {
         try { $Host.UI.RawUI.WindowTitle = 'Claude SSH - OPEN, {0:hh\:mm\:ss} left - close window to stop' -f $left } catch { }
 
         Update-ProcWatch
-        foreach ($line in @(Read-NewLogLines)) { Show-LogLine $line }
-        Complete-Block
+        Update-Window
 
         if ($sshd.HasExited) { Say "sshd stopped by itself (code $($sshd.ExitCode))." Red; $failed = $true; break }
         if ($left.TotalSeconds -le 0) { Say 'Time is up - closing everything and this window.' Yellow; break }
-        if ($script:ProcMode) {
-            [void](Wait-Event -SourceIdentifier $ProcSource -Timeout 1)   # wakes up on a new process
-            Start-Sleep -Milliseconds 100
-        } else {
-            Start-Sleep -Milliseconds 700
-        }
+        [void](Wait-Event -Timeout 1)   # wakes up on a new process or an sshd message
+        Start-Sleep -Milliseconds 100
     }
 } catch {
     Say $_.Exception.Message Red
@@ -634,14 +705,27 @@ try {
     Stop-Descendants
     Stop-OurSshd
     Remove-OurFirewallRule
+    if (Test-Path $Work) { Remove-Item -Path $Work -Recurse -Force -ErrorAction SilentlyContinue }
+    # The log first, the window after: a broken window must not cost the log its end.
+    $stopped = @()
     if ($script:SessionLog) {
-        try { foreach ($line in @(Read-NewLogLines)) { Show-LogLine $line }; Complete-Block } catch { }
+        Start-Sleep -Milliseconds 300   # the last sshd messages
+        try { Update-SshdLog } catch { }
+        foreach ($line in @(Read-NewLogLines)) { try { Show-LogLine $line } catch { } }
+        foreach ($id in @($script:Running.Keys)) {
+            Write-LogRecord -Id $id -Tag 'NOTE' -Lines @(('(started {0}, still running when SSH closed: stopped, no EXIT)' -f $script:Running[$id]))
+            $stopped += ('#{0} (started {1})' -f $id, $script:Running[$id])
+        }
         Write-LogRecord -Id 0 -Tag 'NOTE' -Lines @('SSH closed')
     }
-    if (Test-Path $Work) { Remove-Item -Path $Work -Recurse -Force -ErrorAction SilentlyContinue }
+    Stop-SshdLog
     try { $Host.UI.RawUI.WindowTitle = 'Claude SSH - CLOSED' } catch { }
-    Say 'SSH CLOSED: sshd stopped, key removed, firewall rule removed.' Green
-    if ($script:SessionLog) { Say ("Session log: {0}" -f $script:SessionLog) }
+    try {
+        Complete-Block
+        if ($stopped.Count) { Say ('Still running, stopped: {0}' -f ($stopped -join ', ')) Yellow }
+        Say 'SSH CLOSED: sshd stopped, key removed, firewall rule removed.' Green
+        if ($script:SessionLog) { Say ("Session log: {0}" -f $script:SessionLog) }
+    } catch { }
 }
 # Normal end (time is up): just exit, the window closes by itself. On an error, keep it open to read.
 if ($failed -and [Environment]::UserInteractive) { [void](Read-Host 'Press Enter to close') }

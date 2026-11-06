@@ -1,10 +1,12 @@
 # ForceCommand target for claude-ssh: records what the client runs in the session log
 # (claude-ssh.ps1 shows it in its window), then runs it with cmd.exe exactly as sshd would.
 #
-# Record tags written here (one line each: "HH:mm:ss #<id> TAG text", <id> = this PID):
+# Record tags written here (one line each: "yyyy-MM-dd HH:mm:ss #<id> TAG text", <id> = this PID):
 #   CMD   the command line, with the client IP
 #   DEC   the decoded payload of powershell -EncodedCommand
 #   IN    text sent on stdin, e.g. a script piped into "[Console]::In.ReadToEnd() | iex"
+#   OUT   what the command printed (stdout), as the client got it
+#   ERR   what the command printed on stderr
 #   FILE  files the command wrote (WriteAllBytes/WriteAllText/Set-Content/Out-File)
 #   EXIT  exit code and run time
 #   NOTE  anything else worth knowing
@@ -12,19 +14,23 @@
 # Keep this file ASCII-only (Windows PowerShell 5.1).
 param([string]$Log = '')
 
-$MaxStdinLog = 1MB     # stdin text kept in the log per command
-$MaxFileLog  = 256KB   # file content kept in the log per file
+$MaxStdinLog  = 1MB     # stdin text kept in the log per command
+$MaxOutputLog = 1MB     # stdout text kept in the log per command, and the same for stderr
+$MaxFileLog   = 256KB   # file content kept in the log per file
 
 $cmd     = $env:SSH_ORIGINAL_COMMAND
 $started = Get-Date
 $client  = ''
 if ($env:SSH_CLIENT) { $client = ($env:SSH_CLIENT -split ' ')[0] }
 $utf8    = New-Object Text.UTF8Encoding($false)
+$utf8Strict = New-Object Text.UTF8Encoding($false, $true)
+$oem = $utf8
+try { $oem = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { }
 
 function Write-Log {
     param([string]$Tag, [string[]]$Lines)
     if (-not $Log -or -not $Lines) { return }
-    $stamp = Get-Date -Format 'HH:mm:ss'
+    $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $sb = New-Object Text.StringBuilder
     foreach ($l in $Lines) {
         $one = "$l" -replace "[\r\n]+", ' '
@@ -42,7 +48,16 @@ function ConvertTo-Body {
     param([string]$Text)
     $t = $Text -replace "`r`n", "`n"
     if ($t.EndsWith("`n")) { $t = $t.Substring(0, $t.Length - 1) }
-    return @($t -split "`n" | ForEach-Object { '| ' + $_ })
+    $parts = $t -split "`n"
+    for ($i = 0; $i -lt $parts.Length; $i++) { $parts[$i] = '| ' + $parts[$i] }
+    return $parts
+}
+
+# Bytes a program printed or got -> text: UTF-8 if they are valid UTF-8, else the OEM code page
+# (what cmd.exe and most console programs print in).
+function ConvertFrom-Bytes {
+    param([byte[]]$Bytes, [int]$Count)
+    try { return $utf8Strict.GetString($Bytes, 0, $Count) } catch { return $oem.GetString($Bytes, 0, $Count) }
 }
 
 # Header plus content (text) or size and hash (binary) of a file the command wrote.
@@ -70,6 +85,115 @@ function Get-FileRecord {
     $out = @($head) + (ConvertTo-Body ($enc.GetString($bytes, $skip, $got - $skip)))
     if ($len -gt $got) { $out += ('| ... ({0} more bytes not shown)' -f ($len - $got)) }
     return $out
+}
+
+# ---------------------------------------------------------------- pumps
+# A pump copies one stream as it arrives (client stdin -> command, command stdout/stderr ->
+# client) and keeps the text for the log. Reading and writing are separate and asynchronous,
+# with a queue in between: a pump reads ahead into memory (up to $MaxQueue) while the other
+# side is busy. That matters: sshd does not read the command's output while it waits for us
+# to take its stdin, so if taking stdin waited for the command, all three would wait for ever.
+$MaxQueue = 64MB
+
+function New-Pump {
+    param([string]$Tag, [string]$What, [IO.Stream]$Src, [IO.Stream]$Dst, [long]$Max, [bool]$CloseDst)
+    $pp = @{ Tag = $Tag; What = $What; Src = $Src; Dst = $Dst; DstOk = $true; CloseDst = $CloseDst; Max = $Max
+             Buf = (New-Object byte[] 65536); ReadTask = $null; SrcDone = $false
+             Queue = (New-Object Collections.Queue); Queued = 0L; WriteTask = $null; WritePhase = ''; Writing = 0
+             Done = $false
+             Pending = (New-Object IO.MemoryStream); Text = (New-Object Text.StringBuilder)
+             Logged = 0L; Total = 0L; Binary = $false; Last = [DateTime]::UtcNow }
+    Start-PumpRead $pp
+    return $pp
+}
+
+function Start-PumpRead {
+    param($pp)
+    try { $pp.ReadTask = $pp.Src.ReadAsync($pp.Buf, 0, $pp.Buf.Length) } catch { $pp.ReadTask = $null; $pp.SrcDone = $true }
+}
+
+# Stop sending (the other side is gone: client disconnected, command ended). Reading and
+# logging go on.
+function Close-PumpOutput {
+    param($pp)
+    $pp.DstOk = $false; $pp.WriteTask = $null; $pp.Queue.Clear(); $pp.Queued = 0L; $pp.Writing = 0
+}
+
+# Move the pump on: take what was read, finish a write, start the next write and read.
+function Step-Pump {
+    param($pp)
+    $t = $pp.ReadTask
+    if ($t -and $t.IsCompleted) {
+        $pp.ReadTask = $null
+        $n = 0
+        try { $n = $t.Result } catch { $n = 0 }   # a failed read = end of the stream
+        if ($n -le 0) {
+            $pp.SrcDone = $true
+        } else {
+            $pp.Total += $n
+            if (-not $pp.Binary -and [Array]::IndexOf($pp.Buf, [byte]0, 0, $n) -ge 0) { $pp.Binary = $true }
+            if (-not $pp.Binary) {
+                $room = $pp.Max - $pp.Logged - $pp.Pending.Length
+                if ($room -gt 0) { $pp.Pending.Write($pp.Buf, 0, [int][Math]::Min($n, $room)) }
+            }
+            if ($pp.DstOk) {
+                $chunk = New-Object byte[] $n
+                [Array]::Copy($pp.Buf, $chunk, $n)
+                $pp.Queue.Enqueue($chunk); $pp.Queued += $n
+            }
+        }
+    }
+    $t = $pp.WriteTask
+    if ($t -and $t.IsCompleted) {
+        $pp.WriteTask = $null
+        if ($t.IsFaulted) { Close-PumpOutput $pp }
+        elseif ($pp.WritePhase -eq 'write') {
+            try { $pp.WriteTask = $pp.Dst.FlushAsync(); $pp.WritePhase = 'flush' } catch { Close-PumpOutput $pp }
+        }
+        if (-not $pp.WriteTask) { $pp.Queued -= $pp.Writing; $pp.Writing = 0 }
+    }
+    if ($pp.DstOk -and -not $pp.WriteTask -and $pp.Queue.Count -gt 0) {
+        $chunk = [byte[]]$pp.Queue.Dequeue()
+        $pp.Writing = $chunk.Length
+        try { $pp.WriteTask = $pp.Dst.WriteAsync($chunk, 0, $chunk.Length); $pp.WritePhase = 'write' } catch { Close-PumpOutput $pp }
+    }
+    if (-not $pp.ReadTask -and -not $pp.SrcDone -and $pp.Queued -lt $MaxQueue) { Start-PumpRead $pp }
+    if ($pp.SrcDone -and -not $pp.WriteTask -and $pp.Queue.Count -eq 0 -and -not $pp.Done) {
+        $pp.Done = $true
+        if ($pp.CloseDst) { try { $pp.Dst.Close() } catch { } }   # end of stdin: let the command see it
+    }
+}
+
+# Log the pump's pending bytes: everything, or (while streaming) up to the last full line.
+function Write-PumpLog {
+    param($pp, [bool]$All)
+    if ($pp.Pending.Length -eq 0) { return }
+    $bytes = $pp.Pending.ToArray()
+    $cut = $bytes.Length
+    if (-not $All) {
+        $lf = [Array]::LastIndexOf($bytes, [byte]10)
+        if ($lf -lt 0) { return }
+        $cut = $lf + 1
+    }
+    $text = ConvertFrom-Bytes $bytes $cut
+    [void]$pp.Text.Append($text)
+    Write-Log $pp.Tag (ConvertTo-Body $text)
+    $pp.Logged += $cut
+    $pp.Pending.SetLength(0)
+    if ($cut -lt $bytes.Length) { $pp.Pending.Write($bytes, $cut, $bytes.Length - $cut) }
+    $pp.Last = [DateTime]::UtcNow
+}
+
+function Complete-PumpLog {
+    param($pp)
+    if ($pp.Binary) {
+        Write-Log $pp.Tag @(('(binary data on {0}, {1} bytes, not shown)' -f $pp.What, $pp.Total))
+        return
+    }
+    Write-PumpLog $pp $true
+    if ($pp.Total -gt $pp.Logged) {
+        Write-Log $pp.Tag @(('({0}: {1} bytes in total, the first {2} are shown)' -f $pp.What, $pp.Total, $pp.Logged))
+    }
 }
 
 # ---------------------------------------------------------------- what is being run
@@ -100,77 +224,60 @@ $psi = New-Object Diagnostics.ProcessStartInfo
 $psi.FileName = Join-Path $env:WINDIR 'System32\cmd.exe'
 if ($cmd) { $psi.Arguments = '/c ' + $cmd }
 $psi.UseShellExecute = $false
-# stdin is a pipe for "ssh host command": copy it to the child AND to the log as it arrives.
-# A console session (ssh -t) keeps its console: it is not copied, its processes are still shown.
-$tee = $false
-try { $tee = [Console]::IsInputRedirected } catch { }
-$psi.RedirectStandardInput = $tee
+# "ssh host command": stdin, stdout and stderr are pipes. Pass each through a pump, so the
+# command gets exactly the same bytes and the log gets a copy. A console session (ssh -t)
+# keeps its console: nothing is copied, its processes are still shown.
+$redirIn = $false; $redirOut = $false; $redirErr = $false
+try { $redirIn  = [Console]::IsInputRedirected }  catch { }
+try { $redirOut = [Console]::IsOutputRedirected } catch { }
+try { $redirErr = [Console]::IsErrorRedirected }  catch { }
+$psi.RedirectStandardInput  = $redirIn
+$psi.RedirectStandardOutput = $redirOut
+$psi.RedirectStandardError  = $redirErr
 $p = [Diagnostics.Process]::Start($psi)
 
-$stdinText = New-Object Text.StringBuilder
-if ($tee) {
-    $stdin   = [Console]::OpenStandardInput()
-    $childIn = $p.StandardInput.BaseStream
-    $childOk = $true
-    $pending = New-Object IO.MemoryStream
-    $state   = @{ Logged = 0L; Total = 0L; Binary = $false; Last = [DateTime]::UtcNow }
+$pumps = New-Object Collections.ArrayList
+$inPump = $null
+if ($redirIn) {
+    $inPump = New-Pump 'IN' 'stdin' ([Console]::OpenStandardInput()) $p.StandardInput.BaseStream $MaxStdinLog $true
+    [void]$pumps.Add($inPump)
+}
+if ($redirOut) { [void]$pumps.Add((New-Pump 'OUT' 'stdout' $p.StandardOutput.BaseStream ([Console]::OpenStandardOutput()) $MaxOutputLog $false)) }
+if ($redirErr) { [void]$pumps.Add((New-Pump 'ERR' 'stderr' $p.StandardError.BaseStream ([Console]::OpenStandardError()) $MaxOutputLog $false)) }
+if (-not ($redirIn -or $redirOut -or $redirErr)) {
+    Write-Log 'NOTE' @('(console session: keystrokes and output are not logged, started programs are shown as PROC)')
+}
 
-    # Log pending stdin bytes: everything, or (while streaming) up to the last full line.
-    function Write-PendingStdin {
-        param([bool]$All)
-        if ($pending.Length -eq 0) { return }
-        $bytes = $pending.ToArray()
-        $cut = $bytes.Length
-        if (-not $All) {
-            $lf = [Array]::LastIndexOf($bytes, [byte]10)
-            if ($lf -lt 0) { return }
-            $cut = $lf + 1
+while ($true) {
+    $exited = $p.HasExited
+    $tasks = New-Object Collections.Generic.List[Threading.Tasks.Task]
+    $live = 0
+    foreach ($pp in $pumps) {
+        if ($pp.Tag -eq 'IN' -and $exited -and -not $pp.Done) {   # nobody reads stdin any more
+            Close-PumpOutput $pp; $pp.ReadTask = $null; $pp.Done = $true
         }
-        $text = $utf8.GetString($bytes, 0, $cut)
-        [void]$stdinText.Append($text)
-        Write-Log 'IN' (ConvertTo-Body $text)
-        $state.Logged += $cut
-        $pending.SetLength(0)
-        if ($cut -lt $bytes.Length) { $pending.Write($bytes, $cut, $bytes.Length - $cut) }
-        $state.Last = [DateTime]::UtcNow
+        if ($pp.Done) { continue }
+        $live++
+        if ($pp.ReadTask)  { $tasks.Add($pp.ReadTask) }
+        if ($pp.WriteTask) { $tasks.Add($pp.WriteTask) }
     }
-
-    $buf  = New-Object byte[] 65536
-    $task = $stdin.ReadAsync($buf, 0, $buf.Length)
-    while ($true) {
-        $done = $false
-        try { $done = $task.Wait(200) } catch { $task = $null }   # a failed read = end of input
-        if ($task -and $done) {
-            $n = $task.Result
-            if ($n -le 0) {
-                $task = $null
-            } else {
-                if ($childOk) { try { $childIn.Write($buf, 0, $n); $childIn.Flush() } catch { $childOk = $false } }
-                $state.Total += $n
-                if (-not $state.Binary -and [Array]::IndexOf($buf, [byte]0, 0, $n) -ge 0) { $state.Binary = $true }
-                if (-not $state.Binary) {
-                    $room = $MaxStdinLog - $state.Logged - $pending.Length
-                    if ($room -gt 0) { $pending.Write($buf, 0, [int][Math]::Min($n, $room)) }
-                }
-                $task = $stdin.ReadAsync($buf, 0, $buf.Length)
-            }
-        }
-        if (-not $task -or $p.HasExited) { break }
-        if (-not $state.Binary -and $pending.Length -gt 0 -and
-            ($pending.Length -ge 64KB -or ([DateTime]::UtcNow - $state.Last).TotalSeconds -ge 2)) { Write-PendingStdin $false }
+    if ($live -eq 0) { break }   # output closed (and stdin, or the command ended)
+    if ($tasks.Count) { try { [void][Threading.Tasks.Task]::WaitAny($tasks.ToArray(), 200) } catch { } }
+    else { Start-Sleep -Milliseconds 50 }
+    foreach ($pp in $pumps) { if (-not $pp.Done) { Step-Pump $pp } }
+    foreach ($pp in $pumps) {
+        if (-not $pp.Binary -and $pp.Pending.Length -gt 0 -and
+            ($pp.Pending.Length -ge 64KB -or ([DateTime]::UtcNow - $pp.Last).TotalSeconds -ge 2)) { Write-PumpLog $pp $false }
     }
-    if (-not $state.Binary) { Write-PendingStdin $true }
-    if ($state.Binary) { Write-Log 'IN' @(('(binary data on stdin, {0} bytes, not shown)' -f $state.Total)) }
-    elseif ($state.Total -gt $state.Logged) { Write-Log 'IN' @(('(stdin: {0} bytes in total, the first {1} are shown)' -f $state.Total, $state.Logged)) }
-    if (-not $task) { try { $childIn.Close() } catch { } }   # end of input: let the child see it
-} else {
-    Write-Log 'NOTE' @('(console session: keystrokes are not logged, started programs are shown as PROC)')
 }
 $p.WaitForExit()
+foreach ($pp in $pumps) { Complete-PumpLog $pp }
 
 # ---------------------------------------------------------------- files it wrote
 try {
-    $scan  = "$cmd`n$decoded`n$($stdinText.ToString())"
+    $stdinText = ''
+    if ($inPump) { $stdinText = $inPump.Text.ToString() }
+    $scan  = "$cmd`n$decoded`n$stdinText"
     $paths = New-Object Collections.Generic.List[string]
     $patterns = @(
         '(?i)\b(?:WriteAllBytes|WriteAllText|WriteAllLines)\(\s*[''"]([^''"]+)[''"]',
@@ -194,5 +301,7 @@ try {
     }
 } catch { }
 
-Write-Log 'EXIT' @(('{0} ({1:0.0} s)' -f $p.ExitCode, ((Get-Date) - $started).TotalSeconds))
+$ended = Get-Date
+try { $ended = $p.ExitTime } catch { }
+Write-Log 'EXIT' @(('{0} ({1:0.0} s)' -f $p.ExitCode, ($ended - $started).TotalSeconds))
 exit $p.ExitCode

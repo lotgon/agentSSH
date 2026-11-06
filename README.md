@@ -40,8 +40,9 @@ ssh -i ~/.ssh/claude-access_ed25519 -p 2222 admin@198.51.100.7 "hostname"
   and every command started from it.
 - 🗄️ **Private by default.** Keys, settings and logs live in `%LOCALAPPDATA%\ClaudeSSH`, readable
   only by you, SYSTEM and Administrators. Never next to the tool, never in git.
-- 📜 **A full log of the session.** Everything shown in the window is also written, untruncated,
-  to a log file while the session runs.
+- 📜 **A log to go through afterwards.** One file per session, a date and time on every line: who
+  logged in and with which key, failed attempts, every command, the scripts sent to it, what it
+  printed back, the files it wrote and how it ended. [The session log ↓](#the-session-log)
 
 > **Status:** young (v0.2). Tested on Windows 11 over loopback, without administrator rights. Not yet
 > tested on Windows Server, with the firewall rule, or across a real network. Try it on a test
@@ -64,7 +65,8 @@ Claude SSH opens SSH **for one session**, on your terms:
    the deadline.
 3. Every command the agent sends goes through a small logger (`cmdlog.ps1`) and is then run by
    `cmd.exe`, exactly as it would be without the logger. The window prints what the logger records
-   and every process the command starts, in color, as it happens.
+   and every process the command starts, in color, as it happens. The session log keeps all of
+   it, plus every login and what each command printed.
 4. When you close the window, press Ctrl+C or the time runs out, everything stops: sshd, sessions,
    commands, the firewall rule.
 
@@ -81,7 +83,8 @@ flowchart LR
     A -- "ssh, port 2222<br/>AllowIp only" --> S
     S --> W
     W --> C
-    W -. "CMD DEC IN<br/>FILE EXIT" .-> L
+    S -. "SSH" .-> L
+    W -. "CMD DEC IN OUT<br/>ERR FILE EXIT" .-> L
     C -. "PROC" .-> L
     L -.-> V
 ```
@@ -94,7 +97,8 @@ flowchart LR
   actually runs." → decoded commands, full stdin scripts, every started process.
 - "I want the access to end on its own, even if I forget about it." → the deadline, plus a key
   that expires.
-- "I need a record of what was done on the server." → the session log.
+- "I need a record of what was done on the server." → the session log: who logged in and when,
+  every command, its script and its output, written files, exit codes.
 - "If something looks wrong, I want to stop everything at once." → close the window.
 
 ## Who should use it, and who shouldn't
@@ -211,16 +215,18 @@ To stop: close the window, or press Ctrl+C in it.
 ## What you see in the window
 
 <p align="center">
-  <img src="assets/window.svg" alt="The Claude SSH window: sshd messages, then CMD, DEC, IN, PROC, FILE and EXIT lines in color" width="900">
+  <img src="assets/window.svg" alt="The Claude SSH window: a login, then CMD, DEC, IN, PROC, FILE and EXIT lines in color, then a failed login in red" width="900">
 </p>
 <p align="center"><sub>From a test run. Names, addresses and paths are changed.</sub></p>
 
-- Lines without a tag come from sshd itself: connections, accepted keys, refusals.
-- Everything the agent does appears as `time #id TAG text`. The `#id` is the same for all lines of
-  one command, so parallel commands can be told apart.
+- Everything appears as `time #id TAG text`. The `#id` is the same for all lines of one command,
+  so parallel commands can be told apart. Lines of sshd itself have no `#id`.
+- `SSH` lines come from sshd. The window shows logins (white), failed attempts (red) and anything
+  unusual. Its routine lines (connection opened, session started and closed) go to the log only.
 
 | Tag | Color | What it shows |
 |---|---|---|
+| `SSH` | white, red on failure | sshd: logins with the key fingerprint, failed attempts |
 | `CMD` | yellow | the command line and the address it came from |
 | `DEC` | dark yellow | the decoded text of `powershell -EncodedCommand` |
 | `IN` | cyan | text sent on stdin: the scripts run through `[Console]::In.ReadToEnd()` |
@@ -228,18 +234,65 @@ To stop: close the window, or press Ctrl+C in it.
 | `FILE` | green | files the command wrote (`WriteAllBytes`, `WriteAllText`, `WriteAllLines`, `Set-Content`, `Out-File`) and their content. A file uploaded in base64 chunks is shown decoded. |
 | `EXIT` | gray, red on error | exit code and run time |
 | `NOTE` | gray | anything else, for example an interactive (`ssh -t`) session |
+| `OUT`, `ERR` | not shown | what the command printed: in the [session log](#the-session-log) only |
 
 **In the window**, a block shows its first 40 lines, long lines are cut at 400 characters and long
-base64 becomes `<base64, N chars>`. **The log has everything** (up to 1 MB of stdin per command and
-256 KB per written file): `%LOCALAPPDATA%\ClaudeSSH\logs\session-<date>.log`. The log is written
-while the session runs, so it survives even if the window is killed.
+base64 becomes `<base64, N chars>`. The session log has all of it.
 
 **Started processes:** with administrator rights the window subscribes to every process start.
 Without them (`-NoFirewall`), it checks once a second and can miss processes that live less than a
 second.
 
-**Secrets:** the log contains whatever the agent wrote to files, passwords in config files
-included. The folder is private, but keep that in mind before you send a log to anyone.
+## The session log
+
+One file per session: `%LOCALAPPDATA%\ClaudeSSH\logs\session-<yyyyMMdd-HHmmss>.log`, a plain text
+file (UTF-8). It is written while the session runs, so it survives even if the window is killed, and it is
+kept after the session ends.
+
+It has everything the window shows, nothing cut short and a date on every line, plus:
+- `SSH`: all of sshd's messages: connections, logins with the key fingerprint, failed attempts,
+  disconnects;
+- `OUT` and `ERR`: what each command printed (stdout and stderr), exactly what the agent got back;
+- `NOTE`: when SSH opened and closed, and commands that were still running when it closed.
+
+An excerpt (from a test run, shortened; names and addresses changed):
+
+```text
+2026-11-06 14:31:11 #0 SSH  Accepted publickey for admin from 203.0.113.10 port 51544 ssh2: ED25519 SHA256:Qe4vN8tY...
+2026-11-06 14:31:12 #43328 CMD  [203.0.113.10] powershell -NoProfile -EncodedCommand JABQAHIAbwBnAHIAZQBz...
+2026-11-06 14:31:12 #43328 DEC  | $ProgressPreference="SilentlyContinue"; $s=[Console]::In.ReadToEnd(); Invoke-Expression $s
+2026-11-06 14:31:12 #43328 IN   | Write-Output "script ran on $env:COMPUTERNAME"
+2026-11-06 14:31:12 #43328 IN   | & ping.exe -n 3 127.0.0.1 | Out-Null
+2026-11-06 14:31:12 #43328 IN   | Write-Output "done"
+2026-11-06 14:31:13 #43328 PROC pid 29940: "C:\Windows\system32\PING.EXE" -n 3 127.0.0.1
+2026-11-06 14:31:15 #43328 OUT  | script ran on SERVER01
+2026-11-06 14:31:15 #43328 OUT  | done
+2026-11-06 14:31:15 #43328 EXIT 0 (2.3 s)
+2026-11-06 14:32:40 #0 SSH  Failed publickey for admin from 203.0.113.10 port 51602 ssh2: ED25519 SHA256:Zk3pW9xQ...
+```
+
+The top of every file explains the tags. To go through all sessions at once, in PowerShell:
+
+```powershell
+$logs = "$env:LOCALAPPDATA\ClaudeSSH\logs\session-*.log"
+# every command, with date, time and address
+Select-String -Path $logs -Pattern '^\S+ \S+ #\d+ CMD ' | ForEach-Object Line
+# logins and failed attempts
+Select-String -Path $logs -Pattern ' SSH  (Accepted publickey|Failed|Invalid user)' | ForEach-Object Line
+# everything about one command, by its #id
+Select-String -Path $logs -Pattern ' #43328 ' | ForEach-Object Line
+```
+
+**Limits:** per command, up to 1 MB of stdin, 1 MB of stdout, 1 MB of stderr and 256 KB per
+written file are kept; for the rest the log says how many bytes there were. Binary data is noted
+with its size only. Output that is not valid UTF-8 is read in the console code page. In an
+interactive session (`ssh -t`) keystrokes and output are not logged; the programs started in it
+are.
+
+**Secrets:** the log contains what the agent sent and what it got back: passwords in config files
+and in command output included. The folder is private, but keep that in mind before you send a log
+to anyone. Old logs are never deleted by the tool; delete them yourself when you no longer need
+them.
 
 ## Where things live, and who can read them
 
@@ -300,7 +353,12 @@ new host key with a new fingerprint.
   the window.
 - Commands run as **your account with the window's (administrator) rights**. Only your account can
   log in.
-- Keystrokes in an interactive session (`ssh -t`) are not logged. The programs started in it are.
+- Keystrokes and output of an interactive session (`ssh -t`) are not logged. The programs started
+  in it are.
+- **About 2 MB of stdin per command.** Scripts and data up to 2 MB went through in about a second;
+  3.4 MB hung. A command that reads and prints megabytes at the same time (a filter such as
+  `findstr` over a big file) can hang too. Microsoft's sshd behaves the same without this tool.
+  Send big files in chunks.
 - `FILE` catches only files written by the methods listed above with a path written in quotes.
   Files changed in other ways (`Copy-Item`, `robocopy`, other programs) show up only as the
   command or process that changed them.
@@ -326,6 +384,9 @@ Locally, over loopback:
   `WriteAllText` and for a base64 chunked upload; exit codes; three parallel commands without
   mixed lines; binary stdin; `ssh -tt`; the first-start templates; the warning for a folder others
   can write to.
+- The session log: logins and a refused key (`SSH`), stdout and stderr (`OUT`, `ERR`) of each
+  command; the client gets the same bytes as without the tool (3.4 MB of text and binary output
+  compared byte for byte); a 2 MB script on stdin; a command still running at the close is noted.
 
 **Not verified yet:** on Windows Server, the firewall rule, port 2222 from another machine, and
 the full process list (`Win32_ProcessStartTrace`). All of these need administrator rights or a
@@ -336,7 +397,7 @@ real network.
 ```text
 claude-ssh.bat                 start here: runs claude-ssh.ps1
 claude-ssh.ps1                 the window: data folder, sshd, firewall, process watch, display
-cmdlog.ps1                     run by sshd for every command: logs it, then runs cmd.exe /c
+cmdlog.ps1                     run by sshd for every command: runs cmd.exe /c, logs it and its output
 claude-ssh.config.example      settings template
 allowed_keys.example.txt       keys template
 OpenSSH-Win64\                 Microsoft Win32-OpenSSH 10.0p2, unchanged (see its LICENSE.txt)

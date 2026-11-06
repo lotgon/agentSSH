@@ -1,35 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="530" viewBox="0 0 1040 530">
-  <rect x="1" y="1" width="1038" height="528" rx="10" fill="#0c0c0c" stroke="#3a3a3a" stroke-width="2"/>
-  <path d="M1 11 a10 10 0 0 1 10 -10 h1018 a10 10 0 0 1 10 10 v27 h-1038 z" fill="#202020"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="587" viewBox="0 0 1180 587">
+  <rect x="1" y="1" width="1178" height="585" rx="10" fill="#0c0c0c" stroke="#3a3a3a" stroke-width="2"/>
+  <path d="M1 11 a10 10 0 0 1 10 -10 h1158 a10 10 0 0 1 10 10 v27 h-1178 z" fill="#202020"/>
   <text x="18" y="25" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#e6e6e6">Administrator: Claude SSH - OPEN, 01:58:47 left - close window to stop</text>
   <g stroke="#bdbdbd" stroke-width="1.2" fill="none">
-    <path d="M916 20 h12"/>
-    <rect x="958" y="14" width="11" height="11"/>
-    <path d="M1001 14 l11 11 M1012 14 l-11 11"/>
+    <path d="M1056 20 h12"/>
+    <rect x="1098" y="14" width="11" height="11"/>
+    <path d="M1141 14 l11 11 M1152 14 l-11 11"/>
   </g>
 
   <g font-family="Cascadia Mono, Consolas, Menlo, monospace" font-size="13" xml:space="preserve" style="white-space:pre">
     <text xml:space="preserve" x="14" y="62" fill="#16c60c">[14:30:05] Firewall: port 2222 open for 203.0.113.10</text>
     <text xml:space="preserve" x="14" y="81" fill="#16c60c">[14:30:05] Closing this window will kill sshd and every SSH session started from it.</text>
-    <text xml:space="preserve" x="14" y="100" fill="#cccccc">Server listening on 0.0.0.0 port 2222.</text>
+    <text xml:space="preserve" x="14" y="100" fill="#8a8a8a">  14:30:05        SSH  Server listening on 0.0.0.0 port 2222.</text>
     <text xml:space="preserve" x="14" y="138" fill="#16c60c">[14:30:06] SSH is OPEN until 16:30 (120 min). Close this window or press Ctrl+C to stop.</text>
     <text xml:space="preserve" x="14" y="157" fill="#cccccc">[14:30:06] Login as: SERVER01\admin   port: 2222   server IPs: 198.51.100.7</text>
     <text xml:space="preserve" x="14" y="176" fill="#cccccc">[14:30:06] Allowed: 1 key(s) from C:\Users\admin\AppData\Local\ClaudeSSH\allowed_keys.txt, from 203.0.113.10</text>
     <text xml:space="preserve" x="14" y="195" fill="#cccccc">[14:30:06] Host key: 256 SHA256:7mQ0c3vYf9xTz1LkR8pN2sWbHuE4aJdG6yKoVtCiXqM claude-ssh-host (ED25519)</text>
     <text xml:space="preserve" x="14" y="214" fill="#cccccc">[14:30:06] Session log: C:\Users\admin\AppData\Local\ClaudeSSH\logs\session-20261106-143005.log</text>
-    <text xml:space="preserve" x="14" y="233" fill="#cccccc">[14:30:06] Started processes: every process</text>
-    <text xml:space="preserve" x="14" y="252" fill="#cccccc">[14:30:06] Below: CMD yellow, decoded DEC dark yellow, stdin scripts IN cyan, PROC magenta, FILE green, EXIT.</text>
-    <text xml:space="preserve" x="14" y="290" fill="#cccccc">Accepted publickey for admin from 203.0.113.10 port 51544 ssh2: ED25519 SHA256:Qe4vN8tY2bLx0RkP7sWm3HcJ9uAfD5gZ1nTiVoXyE6k</text>
-    <text xml:space="preserve" x="14" y="309" fill="#f9f1a5">  14:31:12 #43328 CMD  [203.0.113.10] powershell -NoProfile -EncodedCommand &lt;base64, 240 chars&gt;</text>
-    <text xml:space="preserve" x="14" y="328" fill="#c19c00">  14:31:12 #43328 DEC  | $ProgressPreference="SilentlyContinue"; $s=[Console]::In.ReadToEnd(); Invoke-Expression $s</text>
-    <text xml:space="preserve" x="14" y="347" fill="#61d6d6">  14:31:12 #43328 IN   | Write-Output "script ran on $env:COMPUTERNAME"</text>
-    <text xml:space="preserve" x="14" y="366" fill="#61d6d6">  14:31:12 #43328 IN   | &amp; ping.exe -n 3 127.0.0.1 | Out-Null</text>
-    <text xml:space="preserve" x="14" y="385" fill="#61d6d6">  14:31:12 #43328 IN   | [IO.File]::WriteAllText('C:\Users\admin\written.txt', "line one`nline two (from stdin script)")</text>
-    <text xml:space="preserve" x="14" y="404" fill="#61d6d6">  14:31:12 #43328 IN   | Write-Output "done"</text>
-    <text xml:space="preserve" x="14" y="423" fill="#d65fcf">  14:31:13 #43328 PROC pid 29940: "C:\Windows\system32\PING.EXE" -n 3 127.0.0.1</text>
-    <text xml:space="preserve" x="14" y="442" fill="#16c60c">  14:31:15 #43328 FILE C:\Users\admin\written.txt (37 bytes)</text>
-    <text xml:space="preserve" x="14" y="461" fill="#16c60c">  14:31:15 #43328 FILE | line one</text>
-    <text xml:space="preserve" x="14" y="480" fill="#16c60c">  14:31:15 #43328 FILE | line two (from stdin script)</text>
-    <text xml:space="preserve" x="14" y="499" fill="#8a8a8a">  14:31:15 #43328 EXIT 0 (2.3 s)</text>
+    <text xml:space="preserve" x="14" y="233" fill="#cccccc">[14:30:06]   it keeps everything below with dates, plus what each command printed (OUT, ERR: not shown here)</text>
+    <text xml:space="preserve" x="14" y="252" fill="#cccccc">[14:30:06] Started processes: every process</text>
+    <text xml:space="preserve" x="14" y="271" fill="#cccccc">[14:30:06] Below: SSH logins (failed: red), CMD yellow, DEC dark yellow, IN cyan, PROC magenta, FILE green, EXIT.</text>
+    <text xml:space="preserve" x="14" y="309" fill="#f2f2f2">  14:31:11        SSH  Accepted publickey for admin from 203.0.113.10 port 51544 ssh2: ED25519 SHA256:Qe4vN8tY2bLx0RkP7sWm3HcJ9uAfD5gZ1nTiVoXyE6k</text>
+    <text xml:space="preserve" x="14" y="328" fill="#f9f1a5">  14:31:12 #43328 CMD  [203.0.113.10] powershell -NoProfile -EncodedCommand &lt;base64, 240 chars&gt;</text>
+    <text xml:space="preserve" x="14" y="347" fill="#c19c00">  14:31:12 #43328 DEC  | $ProgressPreference="SilentlyContinue"; $s=[Console]::In.ReadToEnd(); Invoke-Expression $s</text>
+    <text xml:space="preserve" x="14" y="366" fill="#61d6d6">  14:31:12 #43328 IN   | Write-Output "script ran on $env:COMPUTERNAME"</text>
+    <text xml:space="preserve" x="14" y="385" fill="#61d6d6">  14:31:12 #43328 IN   | &amp; ping.exe -n 3 127.0.0.1 | Out-Null</text>
+    <text xml:space="preserve" x="14" y="404" fill="#61d6d6">  14:31:12 #43328 IN   | [IO.File]::WriteAllText('C:\Users\admin\written.txt', "line one`nline two (from stdin script)")</text>
+    <text xml:space="preserve" x="14" y="423" fill="#61d6d6">  14:31:12 #43328 IN   | Write-Output "done"</text>
+    <text xml:space="preserve" x="14" y="442" fill="#d65fcf">  14:31:13 #43328 PROC pid 29940: "C:\Windows\system32\PING.EXE" -n 3 127.0.0.1</text>
+    <text xml:space="preserve" x="14" y="461" fill="#16c60c">  14:31:15 #43328 FILE C:\Users\admin\written.txt (37 bytes)</text>
+    <text xml:space="preserve" x="14" y="480" fill="#16c60c">  14:31:15 #43328 FILE | line one</text>
+    <text xml:space="preserve" x="14" y="499" fill="#16c60c">  14:31:15 #43328 FILE | line two (from stdin script)</text>
+    <text xml:space="preserve" x="14" y="518" fill="#8a8a8a">  14:31:15 #43328 EXIT 0 (2.3 s)</text>
+    <text xml:space="preserve" x="14" y="537" fill="#e74856">  14:32:40        SSH  Failed publickey for admin from 203.0.113.10 port 51602 ssh2: ED25519 SHA256:Zk3pW9xQe1RtY7uI0oP5aS2dF8gH4jK6lL0zXcVbNmA</text>
+    <text xml:space="preserve" x="14" y="556" fill="#e74856">  14:32:40        SSH  srclimit_penalise: ipv4: new 203.0.113.10/32 deferred penalty of 5 seconds for penalty: failed authentication</text>
   </g>
 </svg>
