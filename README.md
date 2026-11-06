@@ -156,6 +156,23 @@ window is elevated, so assume the agent has your **administrator** rights until 
 
 ---
 
+## Let your AI agent set it up
+
+The easiest way. Ask the agent that will use the server (Claude Code, Claude Desktop, or any agent
+that can run commands on your computer) to prepare everything. Paste this:
+
+```text
+Set up Claude SSH so you can work on my Windows server: https://github.com/lotgon/agentSSH
+Follow https://raw.githubusercontent.com/lotgon/agentSSH/main/AGENT-SETUP.md
+Ask me what you need, then give me the zip to copy to the server.
+```
+
+The agent checks for its SSH key (and makes one if needed), asks which keys and which addresses
+to allow, and bakes `claude-ssh-baked.zip` with them. You copy the zip to the server, unzip it,
+start `claude-ssh\claude-ssh.bat` and send the agent the cyan line `For the agent: ...` from the
+window. The agent checks the server's host key and connects. Its instructions:
+[AGENT-SETUP.md](AGENT-SETUP.md).
+
 ## Quick start
 
 You need: a Windows server you can sign in to (RDP or console), and the workstation where the
@@ -197,18 +214,21 @@ rule). The window shows:
 [14:30:06] SSH is OPEN until 16:30 (120 min). Close this window or press Ctrl+C to stop.
 [14:30:06] Login as: SERVER01\admin   port: 2222   server IPs: 198.51.100.7
 [14:30:06] Host key: 256 SHA256:7mQ0c3vYf9xTz1LkR8pN2sWbHuE4aJdG6yKoVtCiXqM claude-ssh-host (ED25519)
+[14:30:06] For the agent: user admin, port 2222, server IPs 198.51.100.7, host key SHA256:7mQ0c3vYf9xTz1LkR8pN2sWbHuE4aJdG6yKoVtCiXqM, open until 16:30
 ```
 
-**5. Tell the agent how to connect.** For example, to Claude Code:
+**5. Tell the agent how to connect.** Send it the `For the agent:` line, with what it needs to
+know. For example, to Claude Code:
 ```text
-SSH into my Windows server: host 198.51.100.7, port 2222, user admin,
-key ~/.ssh/claude-access_ed25519. Host key fingerprint:
-SHA256:7mQ0c3vYf9xTz1LkR8pN2sWbHuE4aJdG6yKoVtCiXqM. Do not connect if it differs.
-Commands run in cmd.exe; use powershell -NoProfile -Command "..." for PowerShell.
-Access ends at 16:30.
+SSH into my Windows server with key ~/.ssh/claude-access_ed25519.
+For the agent: user admin, port 2222, server IPs 198.51.100.7, host key SHA256:7mQ0c3vYf9xTz1LkR8pN2sWbHuE4aJdG6yKoVtCiXqM, open until 16:30
+Do not connect if the host key differs. How to work through it:
+https://raw.githubusercontent.com/lotgon/agentSSH/main/AGENT-SETUP.md#working-through-claude-ssh
 ```
 On the first connection, ssh asks to confirm the server's key. It must match the `Host key` line in
-the window (an agent can check it first with `ssh-keyscan -p 2222 198.51.100.7 | ssh-keygen -lf -`).
+the window (an agent can check it first with `ssh-keyscan -p 2222 198.51.100.7 | ssh-keygen -lf -`;
+on Windows use `OpenSSH-Win64\ssh-keyscan.exe` from this tool, the one built into Windows fails
+against OpenSSH 10).
 The key is created once and kept, so the fingerprint stays the same from session to session.
 
 The user name is the part of `Login as:` after the backslash (`admin`). This was tested with a
@@ -463,7 +483,8 @@ real network.
 
 ```text
 claude-ssh.bat                 start here: runs claude-ssh.ps1
-claude-ssh.ps1                 the window: data folder, sshd, firewall, process watch, display
+AGENT-SETUP.md                 for AI agents: set it up for a person, bake, connect, work through it
+claude-ssh.ps1                 the window: data folder, sshd, firewall, process watch, display, -Bake
 cmdlog.ps1                     run by sshd for every command: runs cmd.exe /c, logs it and its output
 claude-ssh.config.example      settings template
 allowed_keys.example.txt       keys template

@@ -218,7 +218,7 @@ function Read-AllowedKeys {
 # every server makes its own.
 $BakedNames = @('claude-ssh.config', 'allowed_keys.txt')
 $ToolFiles  = @('claude-ssh.bat', 'claude-ssh.ps1', 'cmdlog.ps1', 'OpenSSH-Win64', 'README.md', 'assets',
-                'allowed_keys.example.txt', 'claude-ssh.config.example')
+                'AGENT-SETUP.md', 'allowed_keys.example.txt', 'claude-ssh.config.example')
 
 # The settings of a file without comments and blank lines: a new bake date is not a change.
 function Get-SettingsText {
@@ -653,7 +653,8 @@ try {
         if ($Bake) { $again = 'run claude-ssh.bat -Bake again' }
         Say "then $again. Opening the folder..." Yellow
         try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"{0}"' -f $DataDir) } catch { }
-        if ([Environment]::UserInteractive) { [void](Read-Host 'Press Enter to close') }
+        # -Bake runs in a terminal, often an AI agent's: never wait for a key there.
+        if ([Environment]::UserInteractive -and -not $Bake) { [void](Read-Host 'Press Enter to close') }
         exit 1
     }
     if ($Bake) {
@@ -664,7 +665,7 @@ try {
     }
 } catch {
     Say $_.Exception.Message Red
-    if ([Environment]::UserInteractive) { [void](Read-Host 'Press Enter to close') }
+    if ([Environment]::UserInteractive -and -not $Bake) { [void](Read-Host 'Press Enter to close') }
     exit 1
 }
 
@@ -794,6 +795,10 @@ try {
     Say ("Login as: {0}   port: {1}   server IPs: {2}" -f $me, $Port, ($addrs -join ', '))
     Say ("Allowed: {0} key(s) from {1}, from {2}" -f $pubKeys.Count, $KeysList, ($ips -join ', '))
     Say ("Host key: {0}" -f $fp)
+    # One line to copy to the agent: everything it needs to connect and check the server.
+    $fpHash = $fp; if ($fp -match '(SHA256:\S+)') { $fpHash = $Matches[1] }
+    Say ('For the agent: user {0}, port {1}, server IPs {2}, host key {3}, open until {4:HH:mm}' -f `
+        ($me -split '\\')[-1], $Port, ($addrs -join ' '), $fpHash, $deadline) Cyan
     Say ("Session log: {0}" -f $script:SessionLog)
     Say '  it keeps everything below with dates, plus what each command printed (OUT, ERR: not shown here)'
     Say ("Started processes: {0}" -f $procNote)
