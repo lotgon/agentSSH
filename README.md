@@ -14,8 +14,22 @@
 > script and started program shows up in a window on your screen. Close the window, and the
 > access, the sessions and everything they started are gone.**
 
-**The whole tool in one line:** run `claude-ssh.bat` on the server, then give the agent the login
-line it prints.
+### Start here: paste this to your AI agent
+
+Claude Code, Claude Desktop, or any agent that can run commands on your computer:
+
+```text
+Set up Claude SSH so you can work on my Windows server: https://github.com/lotgon/agentSSH
+Follow https://raw.githubusercontent.com/lotgon/agentSSH/main/AGENT-SETUP.md
+Ask me what you need, then give me the zip to copy to the server.
+```
+
+The agent asks which keys and addresses to allow and gives you `claude-ssh-baked.zip`. Copy it to
+the server, unzip it, start `claude-ssh\claude-ssh.bat`, and send the agent the cyan line
+`For the agent: ...` from the window. That's all. [What the agent does ↓](#let-your-ai-agent-set-it-up)
+
+**Or by hand, the whole tool in one line:** run `claude-ssh.bat` on the server, then give the
+agent the login line it prints. [Quick start ↓](#quick-start)
 
 ```bat
 :: SERVER: open SSH for 2 hours (asks for administrator rights)
@@ -158,8 +172,9 @@ window is elevated, so assume the agent has your **administrator** rights until 
 
 ## Let your AI agent set it up
 
-The easiest way. Ask the agent that will use the server (Claude Code, Claude Desktop, or any agent
-that can run commands on your computer) to prepare everything. Paste this:
+The easiest way, and the one at the top of this page. Ask the agent that will use the server
+(Claude Code, Claude Desktop, or any agent that can run commands on your computer) to prepare
+everything. Paste this:
 
 ```text
 Set up Claude SSH so you can work on my Windows server: https://github.com/lotgon/agentSSH
