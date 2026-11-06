@@ -7,6 +7,9 @@ session/
 logs/
 last-session-commands-*.log
 *.log
+# A baked copy carries a key and addresses: never commit one
+baked/
+claude-ssh-baked*.zip
 
 # Build output
 dist/
