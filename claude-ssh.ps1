@@ -329,6 +329,7 @@ function Show-LogLine {
 $script:ProcMode = ''
 $script:ProcTree = @{}
 $script:ProcWait = New-Object System.Collections.ArrayList
+$script:ProcPruned = Get-Date
 
 function Start-ProcWatch {
     try {   # every process start, but only for administrators
@@ -348,6 +349,37 @@ function Stop-ProcWatch {
     Remove-Event -SourceIdentifier $ProcSource -ErrorAction SilentlyContinue
 }
 
+function Get-ProcStart {
+    param([int]$ProcId)
+    try { return (Get-Process -Id $ProcId -ErrorAction Stop).StartTime } catch { return $null }
+}
+
+# Windows reuses process IDs. True if the process with this ID is still the one we recorded
+# (started at $Start), or has ended: then late children of it are still ours.
+function Test-SameProcess {
+    param([int]$ProcId, $Start)
+    $p = Get-Process -Id $ProcId -ErrorAction SilentlyContinue
+    if (-not $p) { return $true }
+    if (-not $Start) { return $false }   # ours ended before we saw it: this one is someone else
+    try { return ($p.StartTime -eq $Start) } catch { return $false }
+}
+
+# Forget processes that ended (a few seconds after we saw them: late children may still come).
+function Remove-EndedProcs {
+    if (((Get-Date) - $script:ProcPruned).TotalSeconds -lt 5) { return }
+    $script:ProcPruned = Get-Date
+    $live = @{}
+    foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) { $live[[int]$p.Id] = $p }
+    foreach ($id in @($script:ProcTree.Keys)) {
+        $node = $script:ProcTree[$id]
+        if ($node.Role -eq 'sshd' -or ((Get-Date) - $node.Added).TotalSeconds -lt 5) { continue }
+        $same = $false
+        $p = $live[[int]$id]
+        if ($p -and $node.Start) { try { $same = ($p.StartTime -eq $node.Start) } catch { } }
+        if (-not $same) { $script:ProcTree.Remove($id) }
+    }
+}
+
 function Get-ProcCmdLine {
     param([int]$ProcId)
     try {
@@ -362,10 +394,14 @@ function Add-ProcEvent {
     param($Item)
     $parent = $script:ProcTree[$Item.Ppid]
     if ($null -eq $parent) { return $false }
+    if (-not (Test-SameProcess $Item.Ppid $parent.Start)) {   # the parent ID now belongs to another process
+        $script:ProcTree.Remove($Item.Ppid); return $false
+    }
     $cl = $Item.Cmd
     if (-not $cl) { $cl = Get-ProcCmdLine $Item.Pid }
     $name = "$($Item.Name)".ToLowerInvariant()
-    $node = @{ Role = 'child'; Owner = $parent.Owner; Depth = $parent.Depth + 1; Interactive = $parent.Interactive }
+    $node = @{ Role = 'child'; Owner = $parent.Owner; Depth = $parent.Depth + 1; Interactive = $parent.Interactive
+               Start = (Get-ProcStart $Item.Pid); Added = (Get-Date) }
     if ($parent.Role -eq 'sshd' -or $parent.Role -eq 'plumb') {
         $node.Depth = 1
         if (($name -eq 'powershell.exe' -or $name -eq 'pwsh.exe') -and "$cl" -like '*cmdlog.ps1*') {
@@ -415,6 +451,7 @@ function Update-ProcWatch {
     foreach ($item in @($script:ProcWait)) {
         if (((Get-Date) - $item.Seen).TotalSeconds -gt 3) { $script:ProcWait.Remove($item) }
     }
+    Remove-EndedProcs
 }
 
 # ---------------------------------------------------------------- settings (before elevation)
@@ -545,7 +582,8 @@ try {
     $env:PATH = "$Bin;$env:PATH"
     $sshd = Start-Process -FilePath (Join-Path $Bin 'sshd.exe') -NoNewWindow -PassThru `
         -ArgumentList ('-D -e -f "{0}"' -f $cfg)
-    $script:ProcTree[[int]$sshd.Id] = @{ Role = 'sshd'; Owner = 0; Depth = 0; Interactive = $false }
+    $script:ProcTree[[int]$sshd.Id] = @{ Role = 'sshd'; Owner = 0; Depth = 0; Interactive = $false
+                                         Start = $sshd.StartTime; Added = (Get-Date) }
     Start-Sleep -Seconds 1
     if ($sshd.HasExited) { throw ("sshd exited at start (code {0}), see its messages above." -f $sshd.ExitCode) }
 
