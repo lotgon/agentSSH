@@ -217,29 +217,50 @@ To stop: close the window, or press Ctrl+C in it.
 
 ## Many servers: bake your settings in once
 
-Filling in two files on every server gets old. Bake them into a copy of the tool instead:
+Filling in two files on every server gets old. Set up one server, then bake its settings into a
+copy of the tool and carry that copy everywhere. The settings always live in
+**`%LOCALAPPDATA%\ClaudeSSH`**: that is where a bake takes them from, and where a baked copy puts
+them.
 
+```text
+ 1. Bake                       2. Install                     3. Update
+ a set-up server               any other server               any server that has it
+ %LOCALAPPDATA%\ClaudeSSH      unzip, start claude-ssh.bat    unzip the new release over
+   -> claude-ssh.bat -Bake       baked\ -> %LOCALAPPDATA%\     the folder, then -Bake again:
+   -> claude-ssh-baked.zip                  ClaudeSSH          a baked copy of the new
+                                 SSH opens                     version for the other servers
+```
+
+**1. Bake.** On a server where the tool is set up and works:
 ```bat
-:: on a machine where the tool is already set up (it uses your key and AllowIp from there)
 claude-ssh.bat -Bake
-:: or anywhere, with the key and addresses given directly
+```
+It takes the key and settings from `%LOCALAPPDATA%\ClaudeSSH` and the code from its own folder, and
+writes `claude-ssh-baked.zip` to the Desktop: the tool plus `baked\allowed_keys.txt` and
+`baked\claude-ssh.config`. It prints where everything came from. On a machine with nothing set up,
+give the key and addresses directly:
+```bat
 claude-ssh.bat -Bake -PublicKey %USERPROFILE%\.ssh\claude-access_ed25519.pub -AllowIp 203.0.113.10
 ```
 
-This writes `claude-ssh-baked.zip` to your Desktop: the tool plus a `baked\` folder with
-`allowed_keys.txt` and `claude-ssh.config`. Copy it to any server, unzip it into your profile and
-start `claude-ssh\claude-ssh.bat`. The first start copies the baked files to
-`%LOCALAPPDATA%\ClaudeSSH` and opens SSH: nothing to fill in.
+**2. Install.** Copy the zip to any server, unzip it into your profile, start
+`claude-ssh\claude-ssh.bat`. The first start copies `baked\` to `%LOCALAPPDATA%\ClaudeSSH` and
+opens SSH: nothing to fill in.
 
+**3. Update.** When a new version comes out, on any server that already has the tool: unzip the
+release over the old folder (your settings stay in `%LOCALAPPDATA%\ClaudeSSH`) and run
+`claude-ssh.bat -Bake` there. The new zip has the new code and the same settings; install it on the
+other servers as in step 2. Or unzip the plain release over the folder on every server: that keeps
+the settings too.
+
+Good to know:
 - **The host key is never baked.** Every server makes its own on its first start, so the agent
   confirms each server once, as usual.
-- **Change of key or address:** bake again and unzip the new copy over the old folder. The next
-  start copies the changed files once and keeps the old ones as `*.bak`. A bake with the same
-  settings changes nothing.
+- **Change of key or address:** change it on one server (or pass `-PublicKey`, `-AllowIp`), bake,
+  and install the new copy over the old folders. Their next start copies the changed files once
+  and keeps the old ones as `*.bak`. A bake with the same settings changes nothing.
 - **Edits by hand** on one server (say, a longer `Duration`) stay until you bring a bake with
-  different settings.
-- **New version of the tool:** unzip the plain release over the baked folder. `baked\` stays, and
-  the settings in `%LOCALAPPDATA%\ClaudeSSH` are not touched. Or bake again with the new version.
+  different settings, and go into the bakes you make on that server.
 - **Only public keys** are baked: `-Bake` refuses a file that holds a private key.
 - The zip holds your public key and your addresses. It is not secret like a private key, but
   share it like a config file, not publicly.

@@ -248,17 +248,23 @@ function Install-BakedSettings {
     if ($copied.Count) { Say ('Baked settings copied to {0}: {1}' -f $DataDir, ($copied -join ', ')) Green }
 }
 
-# -Bake: the keys and settings of this machine (data folder, or next to the script for a
-# v0.1 folder), plus -PublicKey, -AllowIp, -Port, -Duration, into Desktop\claude-ssh-baked.zip.
+# -Bake: the code of THIS folder (so an updated folder bakes the new version) with the keys and
+# settings of this machine: %LOCALAPPDATA%\ClaudeSSH, which a baked copy filled on its first
+# start (or, for a v0.1 folder, the files next to the script); plus -PublicKey, -AllowIp, -Port,
+# -Duration. Written to Desktop\claude-ssh-baked.zip.
 function New-BakedCopy {
     $cfgPath = $Config;   if (-not (Test-Path $cfgPath))  { $cfgPath  = Join-Path $Root 'claude-ssh.config' }
     $keysPath = $KeysList; if (-not (Test-Path $keysPath)) { $keysPath = Join-Path $Root 'allowed_keys.txt' }
+    $from = @()
     $cfg  = Read-SessionConfig $cfgPath
+    if (Test-Path $cfgPath) { $from += $cfgPath }
     $keys = New-Object Collections.Generic.List[string]
     foreach ($k in @(Read-AllowedKeys $keysPath)) { if (-not $keys.Contains($k)) { $keys.Add($k) } }
+    if (Test-Path $keysPath) { $from += $keysPath }
     foreach ($p in @($PublicKey -split '[,;]' | ForEach-Object { $_.Trim().Trim('"') } | Where-Object { $_ })) {
         if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "Public key file not found: $p" }
         foreach ($k in @(Read-AllowedKeys $p)) { if (-not $keys.Contains($k)) { $keys.Add($k) } }
+        $from += $p
     }
     $ipText = $AllowIp
     if (-not $ipText -and $cfg.ContainsKey('allowip')) { $ipText = $cfg['allowip'] -join ',' }
@@ -304,6 +310,9 @@ function New-BakedCopy {
         Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
     }
     Say ('Baked: {0}' -f $out) Green
+    Say ('  code from: {0}' -f $Root)
+    foreach ($f in $from) { Say ('  settings from: {0}' -f $f) }
+    if ($AllowIp -or $Port -or $Duration) { Say '  settings from: the -AllowIp/-Port/-Duration given now' }
     Say ('  {0} key(s), AllowIp {1}, port {2}, {3} by default' -f $keys.Count, ($ipList -join ', '), $prt, $dur)
     Say '  Copy it to a server, unzip, start claude-ssh\claude-ssh.bat: nothing else to set up.'
     Say '  It holds your public key and addresses: share it like a config file, not publicly.'
