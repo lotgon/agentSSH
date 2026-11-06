@@ -1,85 +1,348 @@
-# Claude SSH — SSH-доступ на время, пока открыто окно
+# Claude SSH: temporary, watched SSH access to a Windows server
 
-Запустили `claude-ssh.bat` — SSH работает. Закрыли окно, нажали Ctrl+C или вышло время — SSH остановлен, вместе со всеми сессиями и запущенными командами.
-Ничего не устанавливается: ни служб, ни компонентов Windows. Внутри переносной OpenSSH 10.0p2 от Microsoft (файлы подписаны Microsoft).
+![platform](https://img.shields.io/badge/server-Windows-0078D6)
+![install](https://img.shields.io/badge/install-nothing%20(unzip%20%26%20run)-brightgreen)
+![openssh](https://img.shields.io/badge/OpenSSH-10.0p2%2C%20Microsoft--signed-444)
+[![release](https://img.shields.io/github/v/release/lotgon/agentSSH)](https://github.com/lotgon/agentSSH/releases/latest)
 
-## Запуск
+<p align="center">
+  <img src="assets/banner.svg" alt="Claude SSH: temporary SSH into a Windows server for an AI agent, while you watch" width="840">
+</p>
 
-1. Распакуйте папку к себе в профиль, например на рабочий стол. Не кладите её в общую папку вроде `C:\` или `C:\Tools`: окно работает с правами администратора, и кто может менять файлы инструмента, тот может выполнить свой код с этими правами. Если папку могут менять другие, окно предупредит красным.
-2. Запустите `claude-ssh.bat`. При первом запуске он создаст папку `%LOCALAPPDATA%\ClaudeSSH`, положит в неё `claude-ssh.config` и `allowed_keys.txt`, откроет её и попросит заполнить:
-   - `allowed_keys.txt` — публичный ключ рабочей машины Claude;
-   - `claude-ssh.config` — `AllowIp`, адреса, с которых можно подключаться.
-3. Запустите `claude-ssh.bat` ещё раз. Он попросит права администратора (UAC и Duo, если включён) — они нужны для правила фаервола.
-4. В окне будет строка `SSH is OPEN until HH:MM`, имя для входа и отпечаток ключа сервера (`Host key`). Сообщите их Claude.
+> **Let an AI agent such as Claude Code (or a colleague) work on your Windows server over SSH.
+> Access lasts two hours, needs their key, works only from their IP address, and every command,
+> script and started program shows up in a window on your screen. Close the window, and the
+> access, the sessions and everything they started are gone.**
 
-Другая длительность: `claude-ssh.bat -Duration 4h` (также `90m`, `1h30m`, максимум `12h`).
+**The whole tool in one line:** run `claude-ssh.bat` on the server, then give the agent the login
+line it prints.
 
-**Обновление с v0.1.** Если рядом со скриптом остались `allowed_keys.txt`, `claude-ssh.config`, `hostkey\` или `last-session-commands-*.log`, первый запуск перенесёт их в `%LOCALAPPDATA%\ClaudeSSH`. Ключ сервера переносится вместе с ними, поэтому отпечаток не меняется и Claude не нужно заново подтверждать хост.
-
-## Где что лежит и у кого доступ
-
-| Что | Где | Доступ |
-|---|---|---|
-| Скрипты и OpenSSH | папка, куда вы распаковали | у всех, кто может писать в эту папку, поэтому только в профиле |
-| `claude-ssh.config`, `allowed_keys.txt` | `%LOCALAPPDATA%\ClaudeSSH` | вы, SYSTEM, Администраторы |
-| Ключ сервера | `%LOCALAPPDATA%\ClaudeSSH\hostkey` | вы, SYSTEM, Администраторы (так требует sshd) |
-| Логи сессий | `%LOCALAPPDATA%\ClaudeSSH\logs` | вы, SYSTEM, Администраторы |
-| `authorized_keys`, `sshd_config` текущей сессии | `%LOCALAPPDATA%\ClaudeSSH\session` | создаются при запуске, удаляются при закрытии |
-| Приватный ключ Claude | только на рабочей машине Claude | на сервер не попадает |
-
-У папки `%LOCALAPPDATA%\ClaudeSSH` скрипт при каждом запуске отключает наследование прав и оставляет доступ только вам, SYSTEM и группе Администраторы.
-
-В git из этого ничего не попадает: в репозитории только примеры `claude-ssh.config.example` и `allowed_keys.example.txt`. Другую папку данных можно задать параметром `-DataDir`.
-
-## Что видно в окне
-
-- Подключения, вход и отказы — сообщения самого `sshd`.
-- Всё, что делает Claude, — строками вида `время #номер ТЕГ текст`. Номер у каждой команды свой, по нему видно, что к чему относится, когда команды идут параллельно.
-
-| Тег | Цвет | Что показывает |
-|---|---|---|
-| `CMD` | жёлтый | команда и IP, с которого она пришла |
-| `DEC` | тёмно-жёлтый | расшифрованный `powershell -EncodedCommand` |
-| `IN` | голубой | текст, переданный на stdin, — сами скрипты, которые выполняются через `[Console]::In.ReadToEnd()` |
-| `PROC` | лиловый | каждый процесс, запущенный командой, с полной командной строкой (отступ — вложенность) |
-| `FILE` | зелёный | файлы, записанные командой (`WriteAllBytes`, `WriteAllText`, `Set-Content`, `Out-File`), и их содержимое; файлы, залитые кусками base64, показываются уже расшифрованными |
-| `EXIT` | серый, красный при ошибке | код выхода и время работы |
-
-В окне длинные блоки обрезаются до 40 строк, а длинный base64 сворачивается в `<base64, N chars>`. В логе всё целиком: `%LOCALAPPDATA%\ClaudeSSH\logs\session-<дата>.log`. Лог пишется по ходу сессии, поэтому сохранится, даже если окно убить.
-
-Процессы: в окне с правами администратора видны все. Без прав администратора (`-NoFirewall`) список опрашивается раз в секунду, и процессы, которые живут меньше секунды, могут не попасть. Ввод с клавиатуры в интерактивной сессии (`ssh -t`) не записывается, запущенные в ней программы видны.
-
-Логи содержат всё, что Claude записал в файлы, включая пароли из конфигов. Папка закрыта для других пользователей, но, пересылая лог, помните об этом.
-
-## Настройки
-
-**`claude-ssh.config`** — откуда, какой порт и на сколько:
+```bat
+:: SERVER: open SSH for 2 hours (asks for administrator rights)
+claude-ssh.bat
+:: WORKSTATION (the agent): log in with the key you allowed
+ssh -i ~/.ssh/claude-access_ed25519 -p 2222 admin@198.51.100.7 "hostname"
 ```
+
+[Русская версия](README.ru.md)
+
+**Why people use it**
+- 📦 **Nothing to install.** Microsoft's portable OpenSSH runs straight from the folder: no
+  Windows feature, no service, no reboot. The system sshd on port 22, if there is one, is not touched.
+- ⏱️ **Access ends by itself.** 2 hours by default (up to 12). When time is up, the window closes
+  everything. The key also expires on its own, as a second guard.
+- 🔑 **Key only, from your addresses only.** This sshd has no password login at all. The firewall
+  *and* sshd both check the client's address.
+- 👀 **You see what really runs.** Not only the command line, but also decoded
+  `-EncodedCommand`, the scripts piped in through stdin, every program they start and the
+  content of the files they write. [What the window shows ↓](#what-you-see-in-the-window)
+- 🧯 **One kill switch.** Close the window or press Ctrl+C, and Windows kills sshd, every session
+  and every command started from it.
+- 🗄️ **Private by default.** Keys, settings and logs live in `%LOCALAPPDATA%\ClaudeSSH`, readable
+  only by you, SYSTEM and Administrators. Never next to the tool, never in git.
+- 📜 **A full log of the session.** Everything shown in the window is also written, untruncated,
+  to a log file while the session runs.
+
+> **Status:** young (v0.2). Tested on Windows 11 over loopback, without administrator rights. Not yet
+> tested on Windows Server, with the firewall rule, or across a real network. Try it on a test
+> server first. See [Limitations](#limitations).
+
+---
+
+## What it does
+
+An AI coding agent (for example [Claude Code](https://claude.com/claude-code)) works through a
+terminal: it can manage a remote machine if it can `ssh` into it. Windows servers usually have no
+SSH, and installing a permanent SSH server just so an agent can fix one thing is more access than
+you want to give.
+
+Claude SSH opens SSH **for one session**, on your terms:
+
+1. You run `claude-ssh.bat` on the server. It starts Microsoft's OpenSSH server in its own console
+   window, under your Windows account, on port 2222.
+2. Only the public keys you listed can log in, only from the addresses you listed, and only until
+   the deadline.
+3. Every command the agent sends goes through a small logger (`cmdlog.ps1`) and is then run by
+   `cmd.exe`, exactly as it would be without the logger. The window prints what the logger records
+   and every process the command starts, in color, as it happens.
+4. When you close the window, press Ctrl+C or the time runs out, everything stops: sshd, sessions,
+   commands, the firewall rule.
+
+```mermaid
+flowchart LR
+    A["AI agent on the workstation<br/>(holds the private key)"]
+    FW["Firewall rule<br/>port 2222, AllowIp only"]
+    S["sshd.exe, portable<br/>runs as you, keys only"]
+    W["cmdlog.ps1<br/>records command, stdin, files"]
+    C["cmd.exe /c command"]
+    P["programs it starts"]
+    L[("session log<br/>%LOCALAPPDATA%\ClaudeSSH\logs")]
+    V["claude-ssh window<br/>shows everything, live"]
+    A -- "ssh -p 2222" --> FW
+    FW --> S
+    S --> W
+    W --> C
+    C --> P
+    W -. "CMD · DEC · IN · FILE · EXIT" .-> L
+    P -. "PROC (process watch)" .-> L
+    L -. "printed in color" .-> V
+```
+
+## Problems it solves
+
+- "I want Claude Code to set up or fix something on a Windows server, but I don't want to install
+  a permanent SSH server or hand out an RDP password."
+- "The agent runs `powershell -EncodedCommand ...` and pipes scripts through stdin. I can't see what
+  actually runs." → decoded commands, full stdin scripts, every started process.
+- "I want the access to end on its own, even if I forget about it." → the deadline, plus a key
+  that expires.
+- "I need a record of what was done on the server." → the session log.
+- "If something looks wrong, I want to stop everything at once." → close the window.
+
+## Who should use it, and who shouldn't
+
+**Good fit**
+- You administer the server and want to let an agent or a colleague do a task in a shell while
+  you watch: installing, configuring, diagnosing, migrating.
+- One-off sessions: open for a couple of hours, close, done.
+- Servers where you can't or don't want to install the OpenSSH Server feature.
+
+**Look elsewhere if**
+- You need **permanent** remote access → install the OpenSSH Server feature, or use RDP or
+  PowerShell Remoting.
+- You want to **approve each command** before it runs. Claude SSH *shows* commands, it does not
+  ask: a command runs as soon as it arrives. If you see something you don't like, close the window.
+- Several people need to log in **as different users**. sshd runs as you, so it can only log
+  people in as you.
+- Nobody will be at the server. Each session needs someone to start the window and confirm the
+  administrator prompt (UAC).
+
+## How it compares
+
+| | **Claude SSH** | OpenSSH Server (Windows feature) | RDP | PowerShell Remoting |
+|---|---|---|---|---|
+| Install on the server | **nothing, unzip and run** | optional feature + service | built in, must be enabled | built in, must be enabled |
+| How long access lasts | **while the window is open (2 h by default, 12 h max)** | until you turn it off | until you turn it off | until you turn it off |
+| Login | **listed keys only, no passwords** | passwords and keys | password | Windows credentials |
+| Who can connect | **AllowIp, checked by the firewall and by sshd** | you configure | you configure | you configure |
+| What you see | **every command, stdin script, started program and written file, live** | connections in the event log | the desktop, if you watch it | nothing, unless transcription is set up |
+| Stop everything | **close the window** | stop the service, end the sessions | sign the session out | end the sessions |
+| An AI agent can drive it from a terminal | **yes, plain `ssh`** | yes, plain `ssh` | no (graphical) | needs PowerShell and Windows credentials |
+
+Rule of thumb: use **Claude SSH** to let an agent into a Windows server **for one task, under
+your eyes**. Install the **OpenSSH Server feature** when SSH should stay on. Claude SSH runs the
+same Microsoft OpenSSH, only portable, for one session and with its own settings.
+
+## Why it's safe
+
+Three locks: **key**, **address** and **time**. The address and time locks are each enforced twice.
+
+| Layer | What it does |
+|---|---|
+| Key only | sshd has no password or keyboard-interactive login. Only the public keys in `allowed_keys.txt` work. The private key never leaves the workstation. |
+| Your addresses, twice | A Windows Firewall rule opens the port only for `AllowIp`. Each key also gets `from="<AllowIp>"`, so sshd refuses it from any other address even if the firewall lets the connection through. |
+| Time, twice | The window stops everything at the deadline. Each key also gets `expiry-time`, so it stops working even if the window somehow kept running. |
+| Your account only | sshd runs as you, so nobody can log in as anyone else. Port, agent and X11 forwarding and tunnels are off. |
+| One kill switch | The window and everything it starts are in a Windows Job Object with kill-on-close. If the window is closed or its process is killed, Windows kills sshd, the sessions and the commands. |
+| Private data folder | `%LOCALAPPDATA%\ClaudeSSH` has inheritance turned off: only you, SYSTEM and Administrators can read it. |
+| Tamper warning | The window runs with administrator rights, so whoever can change the tool's files could run code as you. If Everyone, Users, Authenticated Users, INTERACTIVE or Guests can change them, the window warns in red. |
+| Signed binaries | `OpenSSH-Win64` is Microsoft's Win32-OpenSSH 10.0p2. All its files carry Microsoft's signature, and the repository stores them byte for byte. |
+
+**Know what you are giving:** commands run as your account, with the rights of the window. The
+window is elevated, so assume the agent has your **administrator** rights until the window closes.
+
+---
+
+## Quick start
+
+You need: a Windows server you can sign in to (RDP or console), and the workstation where the
+agent runs.
+
+**1. On the workstation: make a key for the agent** (once).
+```bash
+ssh-keygen -t ed25519 -f "$HOME/.ssh/claude-access_ed25519" -C claude-access
+```
+You will need the **public** half, `~/.ssh/claude-access_ed25519.pub`, and the address the server
+will see the workstation come from (the public IP for internet access, or the LAN/VPN address).
+
+**2. On the server: download and unzip into your profile.** In PowerShell:
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
+$d = [Environment]::GetFolderPath('Desktop')
+Invoke-WebRequest https://github.com/lotgon/agentSSH/releases/latest/download/claude-ssh.zip -OutFile "$d\claude-ssh.zip" -UseBasicParsing
+Expand-Archive "$d\claude-ssh.zip" $d -Force
+& "$d\claude-ssh\claude-ssh.bat"
+```
+Or download [`claude-ssh.zip`](https://github.com/lotgon/agentSSH/releases/latest/download/claude-ssh.zip)
+with a browser, open the file's **Properties** and tick **Unblock**, then unzip it to your Desktop.
+
+Keep the folder in **your profile** (Desktop, Documents), not in `C:\` or `C:\Tools`. See the
+tamper warning above.
+
+**3. First start: fill in two files.** The first start creates `%LOCALAPPDATA%\ClaudeSSH`, opens
+it in Explorer and stops. Fill in:
+- `allowed_keys.txt`: paste the public key from step 1 (one line, `ssh-ed25519 AAAA... claude-access`);
+- `claude-ssh.config`: remove the `#` before `AllowIp` and put the workstation's address there.
+
+**4. Start `claude-ssh.bat` again.** Confirm the administrator prompt (needed for the firewall
+rule). The window shows:
+```text
+[14:30:06] SSH is OPEN until 16:30 (120 min). Close this window or press Ctrl+C to stop.
+[14:30:06] Login as: SERVER01\admin   port: 2222   server IPs: 198.51.100.7
+[14:30:06] Host key: 256 SHA256:7mQ0c3vYf9xTz1LkR8pN2sWbHuE4aJdG6yKoVtCiXqM claude-ssh-host (ED25519)
+```
+
+**5. Tell the agent how to connect.** For example, to Claude Code:
+```text
+SSH into my Windows server: host 198.51.100.7, port 2222, user admin,
+key ~/.ssh/claude-access_ed25519. Host key fingerprint:
+SHA256:7mQ0c3vYf9xTz1LkR8pN2sWbHuE4aJdG6yKoVtCiXqM. Do not connect if it differs.
+Commands run in cmd.exe; use powershell -NoProfile -Command "..." for PowerShell.
+Access ends at 16:30.
+```
+On the first connection, ssh asks to confirm the server's key. It must match the `Host key` line in
+the window (an agent can check it first with `ssh-keyscan -p 2222 198.51.100.7 | ssh-keygen -lf -`).
+The key is created once and kept, so the fingerprint stays the same from session to session.
+
+The user name is the part of `Login as:` after the backslash (`admin`). This was tested with a
+local account; domain accounts were not tested yet.
+
+To stop: close the window, or press Ctrl+C in it.
+
+## What you see in the window
+
+<p align="center">
+  <img src="assets/window.svg" alt="The Claude SSH window: sshd messages, then CMD, DEC, IN, PROC, FILE and EXIT lines in color" width="900">
+</p>
+<p align="center"><sub>From a test run. Names, addresses and paths are changed.</sub></p>
+
+- Lines without a tag come from sshd itself: connections, accepted keys, refusals.
+- Everything the agent does appears as `time #id TAG text`. The `#id` is the same for all lines of
+  one command, so parallel commands can be told apart.
+
+| Tag | Color | What it shows |
+|---|---|---|
+| `CMD` | yellow | the command line and the address it came from |
+| `DEC` | dark yellow | the decoded text of `powershell -EncodedCommand` |
+| `IN` | cyan | text sent on stdin: the scripts run through `[Console]::In.ReadToEnd()` |
+| `PROC` | magenta | every process the command started, with its full command line (indent = nesting) |
+| `FILE` | green | files the command wrote (`WriteAllBytes`, `WriteAllText`, `WriteAllLines`, `Set-Content`, `Out-File`) and their content. A file uploaded in base64 chunks is shown decoded. |
+| `EXIT` | gray, red on error | exit code and run time |
+| `NOTE` | gray | anything else, for example an interactive (`ssh -t`) session |
+
+**In the window**, a block shows its first 40 lines, long lines are cut at 400 characters and long
+base64 becomes `<base64, N chars>`. **The log has everything** (up to 1 MB of stdin per command and
+256 KB per written file): `%LOCALAPPDATA%\ClaudeSSH\logs\session-<date>.log`. The log is written
+while the session runs, so it survives even if the window is killed.
+
+**Started processes:** with administrator rights the window subscribes to every process start.
+Without them (`-NoFirewall`), it checks once a second and can miss processes that live less than a
+second.
+
+**Secrets:** the log contains whatever the agent wrote to files, passwords in config files
+included. The folder is private, but keep that in mind before you send a log to anyone.
+
+## Where things live, and who can read them
+
+| What | Where | Who has access |
+|---|---|---|
+| Scripts and OpenSSH | the folder you unzipped | whoever can write to that folder, so keep it in your profile |
+| `claude-ssh.config`, `allowed_keys.txt` | `%LOCALAPPDATA%\ClaudeSSH` | you, SYSTEM, Administrators |
+| Server host key | `%LOCALAPPDATA%\ClaudeSSH\hostkey` | you, SYSTEM, Administrators (sshd requires this) |
+| Session logs | `%LOCALAPPDATA%\ClaudeSSH\logs` | you, SYSTEM, Administrators |
+| `authorized_keys`, `sshd_config` of the current session | `%LOCALAPPDATA%\ClaudeSSH\session` | created at start, deleted at stop |
+| The agent's private key | the workstation only | never reaches the server |
+
+At every start the tool resets the permissions of `%LOCALAPPDATA%\ClaudeSSH` to: you, SYSTEM and
+Administrators only.
+
+## Settings
+
+**`claude-ssh.config`** (in `%LOCALAPPDATA%\ClaudeSSH`): where from, which port, how long.
+```ini
+# Addresses allowed to connect: one per line or comma separated; subnets OK (10.8.0.0/24)
 AllowIp = 203.0.113.10
 AllowIp = 198.51.100.20
+# Default session length: 2h, 90m, 1h30m; 12h at most
 Duration = 2h
+# Not 22, so it never clashes with a system sshd
 Port = 2222
 ```
 
-**`allowed_keys.txt`** — кто: публичные ключи, по одному на строку (обычно только ключ рабочей машины Claude).
+**`allowed_keys.txt`**: who. Public keys, one per line (`ssh-ed25519`, `ssh-rsa`, `ecdsa-*`,
+`sk-*`). Usually just the agent's key. Lines starting with `#` are ignored.
 
-## Защита
+**Parameters** override the config for one run:
 
-1. **Ключ — главный замок.** Паролей у этого sshd нет совсем, предлагается только вход по ключу. Приватный ключ лежит только на рабочей машине.
-2. **IP — второй замок, сработает дважды:** правило фаервола пускает только адреса из `AllowIp`, а каждый ключ получает ограничение `from="..."` — sshd отклонит ключ с любого другого адреса.
-3. **Время — третий замок.** Окно закрывается само. Ключ получает `expiry-time` и после срока не подходит, даже если что-то пошло не так.
-4. sshd работает **от вашей учётки**, поэтому войти можно только под ней. Проброс портов, agent и X11 forwarding запрещены. Стандартный порт 22 и системный sshd, если он есть, не затрагиваются.
-5. Всё, что запущено из окна, привязано к объекту-заданию Windows (Job Object). Когда окно закрывается или процесс убит, Windows сама убивает `sshd`, сессии и команды.
-6. Ключи, настройки и логи лежат в папке, закрытой для других пользователей. Если папку с самим инструментом могут менять другие, окно предупреждает об этом.
+| Parameter | Default | What it does |
+|---|---|---|
+| `-Duration 4h` | `Duration` from the config, else `2h` | session length: `90m`, `1h30m`, `3` (hours); 1 minute to 12 hours |
+| `-Port 2200` | `Port` from the config, else `2222` | TCP port for sshd |
+| `-AllowIp 203.0.113.10,10.8.0.0/24` | `AllowIp` from the config | allowed addresses |
+| `-ListenAddress 10.0.0.5` | `0.0.0.0` | the server address sshd listens on |
+| `-DataDir D:\ClaudeSSH` | `%LOCALAPPDATA%\ClaudeSSH` | where settings, keys and logs live |
+| `-NoFirewall` | off | no firewall rule and no administrator prompt; processes are checked once a second |
 
-Если окно закрыли крестиком, правило фаервола `Claude-SSH-session` может остаться. Это безопасно: порт никто не слушает. При следующем запуске оно удаляется.
+Example: `claude-ssh.bat -Duration 4h`.
 
-## Проверено (локально, loopback)
+## Upgrading from v0.1
 
-- Вход по ключу работает; чужой ключ, чужой пользователь и вход без ключа — отказ.
-- Адрес не из `AllowIp` получает отказ («Refused by key options»).
-- Работают кавычки, `&` и `|`, коды выхода и stdin.
-- Закрытие окна, Ctrl+C, истечение времени и жёсткое убийство скрипта завершают `sshd`, открытые сессии и запущенные в них команды.
-- v0.2, без прав администратора: перенос старых файлов с тем же отпечатком ключа сервера; `CMD`, `DEC`, полный текст скрипта из stdin (300 строк), `PROC` для процесса, запущенного скриптом, `FILE` для `WriteAllText` и для заливки кусками base64; коды выхода; три параллельные команды без перемешивания строк; бинарные данные на stdin; сессия `ssh -tt`; создание шаблонов при первом запуске; предупреждение о папке, доступной на запись другим.
+Unzip the new version **over the old folder** and start it. v0.1 kept `allowed_keys.txt`,
+`claude-ssh.config`, `hostkey\` and `last-session-commands-*.log` next to the script. The first
+start of v0.2 moves them to `%LOCALAPPDATA%\ClaudeSSH`. The host key moves with them, so the
+fingerprint does not change and the agent does not need to confirm the server again.
 
-**Не проверено на сервере:** правило фаервола, доступность порта 2222 снаружи и полный список процессов (`Win32_ProcessStartTrace`), для которых нужны права администратора.
+To go back to v0.1 after that, copy those files back next to the script. Otherwise v0.1 creates a
+new host key with a new fingerprint.
+
+## Limitations
+
+- **It watches, it does not approve.** Commands run as soon as they arrive. To stop them, close
+  the window.
+- Commands run as **your account with the window's (administrator) rights**. Only your account can
+  log in.
+- Keystrokes in an interactive session (`ssh -t`) are not logged. The programs started in it are.
+- `FILE` catches only files written by the methods listed above with a path written in quotes.
+  Files changed in other ways (`Copy-Item`, `robocopy`, other programs) show up only as the
+  command or process that changed them.
+- `scp` and `sftp` were not tested and are not expected to work: every session goes through the
+  command logger. Agents can send files through commands (for example base64 + `WriteAllBytes`),
+  and the window then shows the decoded file.
+- Without administrator rights (`-NoFirewall`), very short processes may be missed.
+- If the window is closed with the ✕ button, the firewall rule `Claude-SSH-session` may stay
+  behind. That is harmless (nothing listens on the port), and the next start removes it.
+- The server must be Windows with Windows PowerShell 5.1 (included in Windows 10 and Windows
+  Server 2016 and later). Tested on Windows 11 only so far.
+
+## Verified so far
+
+Locally, over loopback:
+- Key login works. A wrong key, a wrong user and a login without a key are refused.
+- A key used from an address outside `AllowIp` is refused (`Refused by key options`).
+- Quotes, `&`, `|`, exit codes and stdin work as without the tool.
+- Closing the window, Ctrl+C, the deadline and killing the script all end sshd, open sessions and
+  the commands running in them.
+- Without administrator rights: the v0.1 files move with the same host key fingerprint; `CMD`,
+  `DEC`, a 300-line stdin script in full, `PROC` for a process the script started, `FILE` for
+  `WriteAllText` and for a base64 chunked upload; exit codes; three parallel commands without
+  mixed lines; binary stdin; `ssh -tt`; the first-start templates; the warning for a folder others
+  can write to.
+
+**Not verified yet:** on Windows Server, the firewall rule, port 2222 from another machine, and
+the full process list (`Win32_ProcessStartTrace`). All of these need administrator rights or a
+real network.
+
+## Repository
+
+```text
+claude-ssh.bat                 start here: runs claude-ssh.ps1
+claude-ssh.ps1                 the window: data folder, sshd, firewall, process watch, display
+cmdlog.ps1                     run by sshd for every command: logs it, then runs cmd.exe /c
+claude-ssh.config.example      settings template
+allowed_keys.example.txt       keys template
+OpenSSH-Win64\                 Microsoft Win32-OpenSSH 10.0p2, unchanged (see its LICENSE.txt)
+```
+
+Your real `claude-ssh.config`, `allowed_keys.txt`, host key and logs are never in the repository
+or the release archive.

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#14263d"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="14" height="640" fill="#d97757"/>
+
+  <text x="80" y="208" font-family="Cascadia Mono, Consolas, Menlo, monospace" font-weight="700" font-size="140" fill="#d97757">&gt;_</text>
+  <text x="300" y="196" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="74" fill="#eef2f7">Claude SSH</text>
+  <text x="304" y="240" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="26" fill="#8a9bb0">agentSSH</text>
+
+  <text x="84" y="318" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="38" fill="#eef2f7">Temporary SSH into Windows, for an AI agent, while you watch</text>
+  <text x="84" y="364" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="25" fill="#8a9bb0">key only · your IPs only · 2 hours · every command on screen · nothing installed</text>
+
+  <rect x="84" y="400" width="1112" height="156" rx="12" fill="#0a0f17" stroke="#26364b" stroke-width="2"/>
+  <g font-family="Cascadia Mono, Consolas, Menlo, monospace" font-size="27" xml:space="preserve" style="white-space:pre">
+    <text xml:space="preserve" x="112" y="460"><tspan fill="#d97757">&gt;</tspan><tspan fill="#eef2f7"> claude-ssh.bat</tspan><tspan fill="#6b7d93">                  # SSH is OPEN until 16:30</tspan></text>
+    <text xml:space="preserve" x="112" y="516"><tspan fill="#5fd068">$</tspan><tspan fill="#eef2f7"> ssh -p 2222 admin@server "..."</tspan><tspan fill="#6b7d93">  # shown live in your window</tspan></text>
+  </g>
+
+  <text x="84" y="608" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="24" fill="#8a9bb0">github.com/lotgon/agentSSH  ·  Microsoft OpenSSH 10.0, portable  ·  close the window = gone</text>
+</svg>
