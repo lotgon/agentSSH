@@ -41,8 +41,9 @@ ssh -i ~/.ssh/claude-access_ed25519 -p 2222 admin@198.51.100.7 "hostname"
 - 📜 **A log to go through afterwards.** One file per session, a date and time on every line: who
   logged in and with which key, failed attempts, every command, the scripts sent to it, what it
   printed back, the files it wrote and how it ended. [The session log ↓](#the-session-log)
-- 🧁 **Set up once, copy everywhere.** `claude-ssh.bat -Bake` puts your key and addresses into a
-  zip of the tool. Unzip it on any server and start it. [Baking ↓](#many-servers-bake-your-settings-in-once)
+- 🧁 **Set up once, copy everywhere.** Set up one server, then `claude-ssh.bat -Bake` puts its
+  keys and addresses into a zip of the tool. Unzip it on any other server and start it.
+  [Baking ↓](#many-servers-bake-your-settings-in-once)
 
 > **Status:** young (v0.2). Tested on Windows 11 over loopback, without administrator rights. Not yet
 > tested on Windows Server, with the firewall rule, or across a real network. Try it on a test
@@ -217,53 +218,57 @@ To stop: close the window, or press Ctrl+C in it.
 
 ## Many servers: bake your settings in once
 
-Filling in two files on every server gets old. Set up one server, then bake its settings into a
-copy of the tool and carry that copy everywhere. The settings always live in
-**`%LOCALAPPDATA%\ClaudeSSH`**: that is where a bake takes them from, and where a baked copy puts
-them.
+Filling in two files on every server gets old. **Set up one server once, bake, copy the result
+everywhere.** The settings always live in **`%LOCALAPPDATA%\ClaudeSSH`**: you set them up there,
+a bake takes them from there, a baked copy puts them there on every other server.
 
 ```text
- 1. Bake                       2. Install                     3. Update
- a set-up server               any other server               any server that has it
- %LOCALAPPDATA%\ClaudeSSH      unzip, start claude-ssh.bat    unzip the new release over
-   -> claude-ssh.bat -Bake       baked\ -> %LOCALAPPDATA%\     the folder, then -Bake again:
-   -> claude-ssh-baked.zip                  ClaudeSSH          a baked copy of the new
-                                 SSH opens                     version for the other servers
+ 1. Set up                      2. Bake                      3. Install
+ one server, once               on that server               on every other server
+ %LOCALAPPDATA%\ClaudeSSH\      claude-ssh.bat -Bake         unzip, start claude-ssh.bat
+   allowed_keys.txt               -> Desktop\                  baked\ -> %LOCALAPPDATA%\
+   claude-ssh.config                 claude-ssh-baked.zip                ClaudeSSH
+                                                               SSH opens
 ```
 
-**1. Bake.** On a server where the tool is set up and works:
+**1. Set up one server** as in the [Quick start](#quick-start), with everything you will need on
+all servers. Several of each is fine:
+- `allowed_keys.txt`: one public key per line, for example one per workstation or agent;
+- `claude-ssh.config`: as many `AllowIp` lines as you need (addresses or subnets), plus `Port` and
+  `Duration`.
+
+Start it once and check that the agent gets in.
+
+**2. Bake** on that server:
 ```bat
 claude-ssh.bat -Bake
 ```
-It takes the key and settings from `%LOCALAPPDATA%\ClaudeSSH` and the code from its own folder, and
-writes `claude-ssh-baked.zip` to the Desktop: the tool plus `baked\allowed_keys.txt` and
-`baked\claude-ssh.config`. It prints where everything came from. On a machine with nothing set up,
-give the key and addresses directly:
-```bat
-claude-ssh.bat -Bake -PublicKey %USERPROFILE%\.ssh\claude-access_ed25519.pub -AllowIp 203.0.113.10
-```
+It writes `claude-ssh-baked.zip` to the Desktop: the code of this folder plus a `baked\` folder
+with copies of your `allowed_keys.txt` and `claude-ssh.config`, exactly as they are. It prints
+where the code and the settings came from. If nothing is set up yet, it creates the two files,
+opens the folder and asks you to fill them in, like the first start does.
 
-**2. Install.** Copy the zip to any server, unzip it into your profile, start
+**3. Install** on every other server: copy the zip, unzip it into your profile, start
 `claude-ssh\claude-ssh.bat`. The first start copies `baked\` to `%LOCALAPPDATA%\ClaudeSSH` and
 opens SSH: nothing to fill in.
 
-**3. Update.** When a new version comes out, on any server that already has the tool: unzip the
-release over the old folder (your settings stay in `%LOCALAPPDATA%\ClaudeSSH`) and run
-`claude-ssh.bat -Bake` there. The new zip has the new code and the same settings; install it on the
-other servers as in step 2. Or unzip the plain release over the folder on every server: that keeps
-the settings too.
+**Updating to a new version:** on any server that has the tool, unzip the new release over the
+old folder (the settings stay in `%LOCALAPPDATA%\ClaudeSSH`) and bake again there. The new zip has
+the new code and the same settings; install it on the other servers as in step 3. Unzipping the
+plain release over the folder on every server keeps the settings too.
+
+**Changing a key or an address for all servers:** change it on one server, bake, install the new
+zip over the old folders. Their next start copies the changed files once and keeps the old ones as
+`*.bak`. A bake with the same settings changes nothing, and a change made by hand on one server
+stays there until a bake with different settings arrives.
 
 Good to know:
 - **The host key is never baked.** Every server makes its own on its first start, so the agent
   confirms each server once, as usual.
-- **Change of key or address:** change it on one server (or pass `-PublicKey`, `-AllowIp`), bake,
-  and install the new copy over the old folders. Their next start copies the changed files once
-  and keeps the old ones as `*.bak`. A bake with the same settings changes nothing.
-- **Edits by hand** on one server (say, a longer `Duration`) stay until you bring a bake with
-  different settings, and go into the bakes you make on that server.
-- **Only public keys** are baked: `-Bake` refuses a file that holds a private key.
-- The zip holds your public key and your addresses. It is not secret like a private key, but
-  share it like a config file, not publicly.
+- **Only public keys:** a bake (and every start) refuses an `allowed_keys.txt` that holds a
+  private key.
+- The zip holds your public keys and your addresses. They are not secret like a private key, but
+  share the zip like a config file, not publicly.
 
 ## What you see in the window
 
@@ -388,12 +393,10 @@ Port = 2222
 | `-ListenAddress 10.0.0.5` | `0.0.0.0` | the server address sshd listens on |
 | `-DataDir D:\ClaudeSSH` | `%LOCALAPPDATA%\ClaudeSSH` | where settings, keys and logs live |
 | `-NoFirewall` | off | no firewall rule and no administrator prompt; processes are checked once a second |
-| `-Bake` | off | no SSH: write a [baked copy](#many-servers-bake-your-settings-in-once) with the key and settings in it |
-| `-PublicKey a.pub,b.pub` | none | with `-Bake`: public keys to add to the ones already set up |
+| `-Bake` | off | no SSH: write a [baked copy](#many-servers-bake-your-settings-in-once) with the settings as they are set up in the data folder |
 | `-BakeTo D:\out.zip` | `Desktop\claude-ssh-baked.zip` | with `-Bake`: where to write the zip |
 
-Example: `claude-ssh.bat -Duration 4h`. With `-Bake`, `-AllowIp`, `-Port` and `-Duration` go into
-the baked copy.
+Example: `claude-ssh.bat -Duration 4h`.
 
 ## Upgrading from v0.1
 
@@ -445,9 +448,10 @@ Locally, over loopback:
 - The session log: logins and a refused key (`SSH`), stdout and stderr (`OUT`, `ERR`) of each
   command; the client gets the same bytes as without the tool (3.4 MB of text and binary output
   compared byte for byte); a 2 MB script on stdin; a command still running at the close is noted.
-- Baking: a copy baked on a machine with nothing set up (`-PublicKey`, `-AllowIp`) starts on an
-  empty data folder, copies its settings and lets the key in; the OpenSSH signatures in the zip are
-  valid; a private key and missing settings are refused; a second start, a bake with the same
+- Baking: two keys and three addresses (a comment in another language included) are baked byte
+  for byte; a baked copy starts on an empty data folder, copies its settings and lets the key in,
+  and a bake made there equals the original; the OpenSSH signatures in the zip are valid; a private
+  key and missing settings are refused; a second start, a bake with the same
   settings and a plain new version change nothing; an edit by hand stays; a bake with a new
   address replaces the config and keeps the old one as `*.bak`.
 
