@@ -1,0 +1,10 @@
+* text=auto
+*.bat text eol=crlf
+
+# Microsoft-signed portable OpenSSH: byte-exact, no line-ending conversion
+# (the .ps1/.psm1/.psd1 files carry Authenticode signatures).
+OpenSSH-Win64/** binary
+
+# Not part of the release zip (git archive)
+.gitignore export-ignore
+.gitattributes export-ignore

@@ -1,0 +1,17 @@
+# Claude SSH session settings. Read by claude-ssh.ps1 at every start.
+# Copy this file to claude-ssh.config and put your real addresses here.
+# Lines starting with # are comments. Command-line parameters override these values.
+#
+# WHO may log in is decided by the keys in allowed_keys.txt (the main lock).
+# Everything below only narrows WHERE FROM, WHICH PORT and HOW LONG.
+
+# Addresses allowed to connect: one per line, or comma separated. Subnets OK (10.8.0.0/24).
+# Used twice: the firewall rule AND a from="..." restriction on every key.
+AllowIp = 203.0.113.10
+AllowIp = 198.51.100.20
+
+# How long the window stays open when started without -Duration (e.g. 2h, 90m, 1h30m; max 12h).
+Duration = 2h
+
+# TCP port sshd listens on (not the standard 22, so it never clashes with a system sshd).
+Port = 2222

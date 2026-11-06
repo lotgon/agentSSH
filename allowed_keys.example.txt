@@ -1,0 +1,5 @@
+# Public keys allowed to log in (one per line). Lines starting with # are ignored.
+# Login is possible ONLY with the matching private key: there are no passwords on this sshd.
+# Copy this file to allowed_keys.txt and add the PUBLIC key of the workstation
+# (e.g. the contents of claude-access_ed25519.pub). The private part never leaves the workstation.
+# ssh-ed25519 AAAA...public-key... claude-access@workstation

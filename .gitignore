@@ -1,0 +1,12 @@
+# Local data of a server: NEVER commit (keys, addresses, session logs).
+# Copy the *.example files and fill them in on the server instead.
+allowed_keys.txt
+claude-ssh.config
+hostkey/
+session/
+logs/
+last-session-commands-*.log
+*.log
+
+# Build output
+dist/
