@@ -41,6 +41,8 @@ ssh -i ~/.ssh/claude-access_ed25519 -p 2222 admin@198.51.100.7 "hostname"
 - 📜 **A log to go through afterwards.** One file per session, a date and time on every line: who
   logged in and with which key, failed attempts, every command, the scripts sent to it, what it
   printed back, the files it wrote and how it ended. [The session log ↓](#the-session-log)
+- 🧁 **Set up once, copy everywhere.** `claude-ssh.bat -Bake` puts your key and addresses into a
+  zip of the tool. Unzip it on any server and start it. [Baking ↓](#many-servers-bake-your-settings-in-once)
 
 > **Status:** young (v0.2). Tested on Windows 11 over loopback, without administrator rights. Not yet
 > tested on Windows Server, with the firewall rule, or across a real network. Try it on a test
@@ -185,6 +187,9 @@ it in Explorer and stops. Fill in:
 - `allowed_keys.txt`: paste the public key from step 1 (one line, `ssh-ed25519 AAAA... claude-access`);
 - `claude-ssh.config`: remove the `#` before `AllowIp` and put the workstation's address there.
 
+A [baked copy](#many-servers-bake-your-settings-in-once) brings both files, so this step is not
+needed with it.
+
 **4. Start `claude-ssh.bat` again.** Confirm the administrator prompt (needed for the firewall
 rule). The window shows:
 ```text
@@ -209,6 +214,35 @@ The user name is the part of `Login as:` after the backslash (`admin`). This was
 local account; domain accounts were not tested yet.
 
 To stop: close the window, or press Ctrl+C in it.
+
+## Many servers: bake your settings in once
+
+Filling in two files on every server gets old. Bake them into a copy of the tool instead:
+
+```bat
+:: on a machine where the tool is already set up (it uses your key and AllowIp from there)
+claude-ssh.bat -Bake
+:: or anywhere, with the key and addresses given directly
+claude-ssh.bat -Bake -PublicKey %USERPROFILE%\.ssh\claude-access_ed25519.pub -AllowIp 203.0.113.10
+```
+
+This writes `claude-ssh-baked.zip` to your Desktop: the tool plus a `baked\` folder with
+`allowed_keys.txt` and `claude-ssh.config`. Copy it to any server, unzip it into your profile and
+start `claude-ssh\claude-ssh.bat`. The first start copies the baked files to
+`%LOCALAPPDATA%\ClaudeSSH` and opens SSH: nothing to fill in.
+
+- **The host key is never baked.** Every server makes its own on its first start, so the agent
+  confirms each server once, as usual.
+- **Change of key or address:** bake again and unzip the new copy over the old folder. The next
+  start copies the changed files once and keeps the old ones as `*.bak`. A bake with the same
+  settings changes nothing.
+- **Edits by hand** on one server (say, a longer `Duration`) stay until you bring a bake with
+  different settings.
+- **New version of the tool:** unzip the plain release over the baked folder. `baked\` stays, and
+  the settings in `%LOCALAPPDATA%\ClaudeSSH` are not touched. Or bake again with the new version.
+- **Only public keys** are baked: `-Bake` refuses a file that holds a private key.
+- The zip holds your public key and your addresses. It is not secret like a private key, but
+  share it like a config file, not publicly.
 
 ## What you see in the window
 
@@ -298,6 +332,7 @@ them.
 |---|---|---|
 | Scripts and OpenSSH | the folder you unzipped | whoever can write to that folder, so keep it in your profile |
 | `claude-ssh.config`, `allowed_keys.txt` | `%LOCALAPPDATA%\ClaudeSSH` | you, SYSTEM, Administrators |
+| Baked settings (a baked copy only) | `baked\` in the tool folder, copied to `%LOCALAPPDATA%\ClaudeSSH` on start | like the scripts: keep the folder in your profile |
 | Server host key | `%LOCALAPPDATA%\ClaudeSSH\hostkey` | you, SYSTEM, Administrators (sshd requires this) |
 | Session logs | `%LOCALAPPDATA%\ClaudeSSH\logs` | you, SYSTEM, Administrators |
 | `authorized_keys`, `sshd_config` of the current session | `%LOCALAPPDATA%\ClaudeSSH\session` | created at start, deleted at stop |
@@ -332,8 +367,12 @@ Port = 2222
 | `-ListenAddress 10.0.0.5` | `0.0.0.0` | the server address sshd listens on |
 | `-DataDir D:\ClaudeSSH` | `%LOCALAPPDATA%\ClaudeSSH` | where settings, keys and logs live |
 | `-NoFirewall` | off | no firewall rule and no administrator prompt; processes are checked once a second |
+| `-Bake` | off | no SSH: write a [baked copy](#many-servers-bake-your-settings-in-once) with the key and settings in it |
+| `-PublicKey a.pub,b.pub` | none | with `-Bake`: public keys to add to the ones already set up |
+| `-BakeTo D:\out.zip` | `Desktop\claude-ssh-baked.zip` | with `-Bake`: where to write the zip |
 
-Example: `claude-ssh.bat -Duration 4h`.
+Example: `claude-ssh.bat -Duration 4h`. With `-Bake`, `-AllowIp`, `-Port` and `-Duration` go into
+the baked copy.
 
 ## Upgrading from v0.1
 
@@ -385,6 +424,11 @@ Locally, over loopback:
 - The session log: logins and a refused key (`SSH`), stdout and stderr (`OUT`, `ERR`) of each
   command; the client gets the same bytes as without the tool (3.4 MB of text and binary output
   compared byte for byte); a 2 MB script on stdin; a command still running at the close is noted.
+- Baking: a copy baked on a machine with nothing set up (`-PublicKey`, `-AllowIp`) starts on an
+  empty data folder, copies its settings and lets the key in; the OpenSSH signatures in the zip are
+  valid; a private key and missing settings are refused; a second start, a bake with the same
+  settings and a plain new version change nothing; an edit by hand stays; a bake with a new
+  address replaces the config and keeps the old one as `*.bak`.
 
 **Not verified yet:** on Windows Server, the firewall rule, port 2222 from another machine, and
 the full process list (`Win32_ProcessStartTrace`). All of these need administrator rights or a

@@ -3,6 +3,8 @@
 #
 #   claude-ssh.bat              (2 hours)
 #   claude-ssh.bat -Duration 4h
+#   claude-ssh.bat -Bake        (no SSH: makes claude-ssh-baked.zip with your key and addresses
+#                                inside; unzip it on any server and start it, nothing to set up)
 #
 # Nothing is installed and no Windows service is used: portable, Microsoft-signed
 # OpenSSH from .\OpenSSH-Win64 runs as YOUR account, so only your account can log in,
@@ -20,7 +22,10 @@ param(
     [string]$AllowIp = '',
     [string]$ListenAddress = '0.0.0.0',
     [string]$DataDir = '',
-    [switch]$NoFirewall
+    [switch]$NoFirewall,
+    [switch]$Bake,              # build a baked copy instead of opening SSH
+    [string]$PublicKey = '',    # -Bake: .pub file(s) to add, comma separated
+    [string]$BakeTo = ''        # -Bake: the zip to write (default: Desktop\claude-ssh-baked.zip)
 )
 
 Set-StrictMode -Version 2.0
@@ -37,6 +42,7 @@ $KeysList = Join-Path $DataDir 'allowed_keys.txt'
 $KeyDir   = Join-Path $DataDir 'hostkey'   # kept between runs: stable fingerprint
 $LogDir   = Join-Path $DataDir 'logs'      # one log per session, kept
 $Work     = Join-Path $DataDir 'session'   # wiped at start and at stop
+$BakedDir = Join-Path $Root 'baked'        # settings carried by a baked copy
 $RuleName = 'Claude-SSH-session'
 $ProcSource    = 'ClaudeSshProc'
 $MaxBlockLines = 40    # console only: lines shown per script/file block (the log has all)
@@ -189,13 +195,118 @@ function Read-SessionConfig {
 }
 
 function Read-AllowedKeys {
-    if (-not (Test-Path $KeysList)) { return @() }
-    $keys = @(Get-Content -Path $KeysList | ForEach-Object { $_.Trim() } |
+    param([string]$Path = $KeysList)
+    if (-not (Test-Path -LiteralPath $Path)) { return @() }
+    $text = Get-Content -LiteralPath $Path -Raw
+    if ($text -match 'PRIVATE KEY') {
+        throw "$Path holds a PRIVATE key. Use the .pub file: the private key must stay on the workstation."
+    }
+    $keys = @(Get-Content -LiteralPath $Path | ForEach-Object { $_.Trim() } |
         Where-Object { $_ -and -not $_.StartsWith('#') })
     foreach ($k in $keys) {
-        if ($k -notmatch '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-\S+|sk-\S+) [A-Za-z0-9+/=]+') { throw "Not a public key line in ${KeysList}: $k" }
+        if ($k -notmatch '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-\S+|sk-\S+) [A-Za-z0-9+/=]+') { throw "Not a public key line in ${Path}: $k" }
     }
     return $keys
+}
+
+# ---------------------------------------------------------------- baked copy
+# claude-ssh.bat -Bake writes a zip of this tool plus .\baked\ with the keys and settings.
+# Unzipped on a server, the first start copies .\baked\ into the data folder. A different bake
+# (another key, other addresses) is copied once more, the old files kept as *.bak; changes
+# made by hand after that stay until the next different bake. The host key is never baked:
+# every server makes its own.
+$BakedNames = @('claude-ssh.config', 'allowed_keys.txt')
+$ToolFiles  = @('claude-ssh.bat', 'claude-ssh.ps1', 'cmdlog.ps1', 'OpenSSH-Win64', 'README.md', 'assets',
+                'allowed_keys.example.txt', 'claude-ssh.config.example')
+
+# The settings of a file without comments and blank lines: a new bake date is not a change.
+function Get-SettingsText {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    return ((Get-Content -LiteralPath $Path | ForEach-Object { $_.Trim() } |
+        Where-Object { $_ -and -not $_.StartsWith('#') }) -join "`n")
+}
+
+function Install-BakedSettings {
+    $present = @($BakedNames | Where-Object { Test-Path (Join-Path $BakedDir $_) })
+    if (-not $present.Count) { return }
+    $stamp = ($present | ForEach-Object { $_ + '=' + (Get-SettingsText (Join-Path $BakedDir $_)) }) -join "`n"
+    $stamp = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash(
+        [Text.Encoding]::UTF8.GetBytes($stamp))).Replace('-', '')
+    $stampFile = Join-Path $DataDir 'baked.applied'
+    if ((Test-Path $stampFile) -and ((Get-Content -LiteralPath $stampFile -Raw).Trim() -eq $stamp)) { return }
+    $copied = @()
+    foreach ($name in $present) {
+        $src = Join-Path $BakedDir $name
+        $dst = Join-Path $DataDir $name
+        if ((Test-Path $dst) -and (Get-SettingsText $dst) -eq (Get-SettingsText $src)) { continue }
+        if (Test-Path $dst) { Copy-Item -LiteralPath $dst -Destination ('{0}.{1:yyyyMMdd-HHmmss}.bak' -f $dst, (Get-Date)) -Force }
+        Copy-Item -LiteralPath $src -Destination $dst -Force
+        $copied += $name
+    }
+    Set-Content -LiteralPath $stampFile -Value $stamp -Encoding Ascii
+    if ($copied.Count) { Say ('Baked settings copied to {0}: {1}' -f $DataDir, ($copied -join ', ')) Green }
+}
+
+# -Bake: the keys and settings of this machine (data folder, or next to the script for a
+# v0.1 folder), plus -PublicKey, -AllowIp, -Port, -Duration, into Desktop\claude-ssh-baked.zip.
+function New-BakedCopy {
+    $cfgPath = $Config;   if (-not (Test-Path $cfgPath))  { $cfgPath  = Join-Path $Root 'claude-ssh.config' }
+    $keysPath = $KeysList; if (-not (Test-Path $keysPath)) { $keysPath = Join-Path $Root 'allowed_keys.txt' }
+    $cfg  = Read-SessionConfig $cfgPath
+    $keys = New-Object Collections.Generic.List[string]
+    foreach ($k in @(Read-AllowedKeys $keysPath)) { if (-not $keys.Contains($k)) { $keys.Add($k) } }
+    foreach ($p in @($PublicKey -split '[,;]' | ForEach-Object { $_.Trim().Trim('"') } | Where-Object { $_ })) {
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "Public key file not found: $p" }
+        foreach ($k in @(Read-AllowedKeys $p)) { if (-not $keys.Contains($k)) { $keys.Add($k) } }
+    }
+    $ipText = $AllowIp
+    if (-not $ipText -and $cfg.ContainsKey('allowip')) { $ipText = $cfg['allowip'] -join ',' }
+    $ipList = @($ipText -split '[,;\s]+' | Where-Object { $_ })
+    $dur = $Duration; if (-not $dur) { $dur = '2h'; if ($cfg.ContainsKey('duration')) { $dur = $cfg['duration'][-1] } }
+    $prt = $Port;     if (-not $prt) { $prt = 2222; if ($cfg.ContainsKey('port')) { $prt = [int]$cfg['port'][-1] } }
+    $minutes = ConvertTo-Minutes $dur
+    if ($minutes -lt 1 -or $minutes -gt 12 * 60) { throw 'Duration must be between 1 minute and 12 hours.' }
+    $missing = @()
+    if ($keys.Count -eq 0)   { $missing += "a public key: -PublicKey <file.pub>, or keys in $KeysList" }
+    if ($ipList.Count -eq 0) { $missing += "addresses: -AllowIp 203.0.113.10, or AllowIp in $Config" }
+    if ($missing.Count) { throw ('Nothing to bake yet. Missing ' + ($missing -join '; ') + '.') }
+
+    $out = $BakeTo
+    if (-not $out) { $out = Join-Path ([Environment]::GetFolderPath('Desktop')) 'claude-ssh-baked.zip' }
+    $out = [IO.Path]::GetFullPath($out)
+    $stage = Join-Path ([IO.Path]::GetTempPath()) ('claude-ssh-bake-' + [Guid]::NewGuid().ToString('N'))
+    $dst = Join-Path $stage 'claude-ssh'
+    try {
+        New-Item -ItemType Directory -Path (Join-Path $dst 'baked') -Force | Out-Null
+        foreach ($item in $ToolFiles) {
+            $src = Join-Path $Root $item
+            if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $dst -Recurse -Force }
+        }
+        $head = @(('# Baked by claude-ssh.bat -Bake on {0:yyyy-MM-dd HH:mm}. The first start of this copy' -f (Get-Date)),
+                  '# copies the file to %LOCALAPPDATA%\ClaudeSSH (the old one is kept as *.bak).')
+        Set-Content -Path (Join-Path $dst 'baked\allowed_keys.txt') -Value ($head + $keys) -Encoding Ascii
+        Set-Content -Path (Join-Path $dst 'baked\claude-ssh.config') -Encoding Ascii -Value (
+            $head + @($ipList | ForEach-Object { "AllowIp = $_" }) + @("Duration = $dur", "Port = $prt"))
+        if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force }
+        # Entry by entry: ZipFile.CreateFromDirectory in Windows PowerShell 5.1 writes "\" into
+        # the names, which other unzip tools turn into odd file names.
+        Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::Open($out, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($f in @(Get-ChildItem -LiteralPath $stage -Recurse -File)) {
+                $name = $f.FullName.Substring($stage.Length + 1).Replace('\', '/')
+                [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $f.FullName, $name,
+                    [IO.Compression.CompressionLevel]::Optimal)
+            }
+        } finally { $zip.Dispose() }
+    } finally {
+        Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Say ('Baked: {0}' -f $out) Green
+    Say ('  {0} key(s), AllowIp {1}, port {2}, {3} by default' -f $keys.Count, ($ipList -join ', '), $prt, $dur)
+    Say '  Copy it to a server, unzip, start claude-ssh\claude-ssh.bat: nothing else to set up.'
+    Say '  It holds your public key and addresses: share it like a config file, not publicly.'
 }
 
 # ---------------------------------------------------------------- data folder
@@ -234,6 +345,8 @@ function Initialize-DataDir {
     foreach ($f in $oldLogs) { Move-Legacy $f.FullName (Join-Path $LogDir $f.Name) }
     if ($oldLogs.Count) { $moved += ('{0} old session log(s)' -f $oldLogs.Count) }
     if ($moved.Count) { Say ('Moved from {0} to {1}: {2}' -f $Root, $DataDir, ($moved -join ', ')) Green }
+
+    Install-BakedSettings
 
     # Templates on the first run. AllowIp lines stay commented out: the examples are not real.
     if (-not (Test-Path $Config)) {
@@ -528,6 +641,16 @@ function Update-ProcWatch {
     Remove-EndedProcs
 }
 
+# ---------------------------------------------------------------- -Bake: the zip, no SSH
+if ($Bake) {
+    try { New-BakedCopy } catch {
+        Say $_.Exception.Message Red
+        if ([Environment]::UserInteractive) { [void](Read-Host 'Press Enter to close') }
+        exit 1
+    }
+    exit 0
+}
+
 # ---------------------------------------------------------------- settings (before elevation)
 $script:SessionLog = $null
 $script:LogPos = 0L
@@ -595,8 +718,13 @@ try {
     $hostKey = Join-Path $KeyDir 'ssh_host_ed25519_key'
     if (-not (Test-Path $hostKey)) {
         if (-not (Test-Path $KeyDir)) { New-Item -ItemType Directory -Path $KeyDir | Out-Null }
-        Start-Process -FilePath (Join-Path $Bin 'ssh-keygen.exe') -NoNewWindow -Wait `
-            -ArgumentList ('-q -t ed25519 -N "" -C claude-ssh-host -f "{0}"' -f $hostKey)
+        # Not Start-Process -Wait: in Windows PowerShell 5.1 it can throw "the process has exited"
+        # when ssh-keygen is quick, which stopped the very first start of a new server.
+        $kg = New-Object Diagnostics.ProcessStartInfo
+        $kg.FileName = Join-Path $Bin 'ssh-keygen.exe'
+        $kg.Arguments = '-q -t ed25519 -N "" -C claude-ssh-host -f "{0}"' -f $hostKey
+        $kg.UseShellExecute = $false
+        ([Diagnostics.Process]::Start($kg)).WaitForExit()
         if (-not (Test-Path $hostKey)) { throw 'ssh-keygen failed to create the host key.' }
     }
     Set-PrivateAcl $hostKey
@@ -656,8 +784,10 @@ try {
     Start-ProcWatch
     $env:PATH = "$Bin;$env:PATH"
     $sshd = Start-Sshd $cfg
+    $sshdStart = $null
+    try { $sshdStart = $sshd.StartTime } catch { }   # sshd may already have exited: said below
     $script:ProcTree[[int]$sshd.Id] = @{ Role = 'sshd'; Owner = 0; Depth = 0; Interactive = $false
-                                         Start = $sshd.StartTime; Added = (Get-Date) }
+                                         Start = $sshdStart; Added = (Get-Date) }
     Start-Sleep -Seconds 1
     Update-Window
     if ($sshd.HasExited) { throw ("sshd exited at start (code {0}), see its messages above." -f $sshd.ExitCode) }
