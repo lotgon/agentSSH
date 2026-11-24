@@ -761,13 +761,11 @@ try {
     if (-not $NoFirewall) {
         New-NetFirewallRule -Name $RuleName -DisplayName 'Claude SSH session (temporary)' `
             -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -RemoteAddress $ips -Profile Any | Out-Null
-        Say ("Firewall: port {0} open for {1}" -f $Port, ($ips -join ', ')) Green
     }
 
     # ---- start sshd as a child of this window (its messages go to the session log and here)
     try {
-        Enable-KillOnClose
-        Say 'Closing this window will kill sshd and every SSH session started from it.' Green
+        Enable-KillOnClose   # closing this window kills sshd and every SSH session started from it
     } catch {
         Say "Could not set up kill-on-close ($($_.Exception.Message)). Use Ctrl+C to stop, not the X button." Red
     }
@@ -790,22 +788,24 @@ try {
     $procNote = 'off (could not subscribe to process events)'
     if ($script:ProcMode -eq 'trace') { $procNote = 'every process' }
     if ($script:ProcMode -eq 'poll')  { $procNote = 'polled once a second (not elevated): very short processes may be missed' }
+    # Short on purpose: what is open, for whom, where the log goes, the line for the agent.
+    # The rest (account, settings files, process watch) goes to the log as a NOTE.
+    $fwNote = 'Windows Firewall lets in only these addresses'
+    if ($NoFirewall) { $fwNote = 'no firewall rule (-NoFirewall)' }
+    $fpHash = $fp; if ($fp -match '(SHA256:\S+)') { $fpHash = $Matches[1] }
     Write-Host ''
     Say ('SSH is OPEN until {0:HH:mm} ({1} min). Close this window or press Ctrl+C to stop.' -f $deadline, $minutes) Green
-    Say ("Login as: {0}   port: {1}   server IPs: {2}" -f $me, $Port, ($addrs -join ', '))
-    Say ("Allowed: {0} key(s) from {1}, from {2}" -f $pubKeys.Count, $KeysList, ($ips -join ', '))
-    Say ("Host key: {0}" -f $fp)
+    Say ('Allowed: {0} key(s) from {1}, port {2}; {3}.' -f $pubKeys.Count, ($ips -join ', '), $Port, $fwNote)
+    if ($script:ProcMode -ne 'trace') { Say ('Started processes: {0}' -f $procNote) Yellow }
+    Say ('Session log: {0}' -f $script:SessionLog) White
+    Say '  everything below with dates, plus what each command printed'
     # One line to copy to the agent: everything it needs to connect and check the server.
-    $fpHash = $fp; if ($fp -match '(SHA256:\S+)') { $fpHash = $Matches[1] }
     Say ('For the agent: user {0}, port {1}, server IPs {2}, host key {3}, open until {4:HH:mm}' -f `
         ($me -split '\\')[-1], $Port, ($addrs -join ' '), $fpHash, $deadline) Cyan
-    Say ("Session log: {0}" -f $script:SessionLog)
-    Say '  it keeps everything below with dates, plus what each command printed (OUT, ERR: not shown here)'
-    Say ("Started processes: {0}" -f $procNote)
-    Say 'Below: SSH logins (failed: red), CMD yellow, DEC dark yellow, IN cyan, PROC magenta, FILE green, EXIT.'
     Write-Host ''
     Write-LogRecord -Id 0 -Tag 'NOTE' -Lines @(
-        ('SSH open until {0:yyyy-MM-dd HH:mm} as {1}, port {2}, from {3}' -f $deadline, $me, $Port, ($ips -join ', ')),
+        ('SSH open until {0:yyyy-MM-dd HH:mm} as {1}, port {2}, from {3}; {4}' -f $deadline, $me, $Port, ($ips -join ', '), $fwNote),
+        ('Keys: {0} from {1}' -f $pubKeys.Count, $KeysList), ('Server IPs: {0}' -f ($addrs -join ', ')),
         ('Host key: {0}' -f $fp), ('Started processes: {0}' -f $procNote))
 
     # ---- watch: print what happens, stop at the deadline
