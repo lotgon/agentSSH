@@ -227,10 +227,13 @@ needed with it.
 rule). The window shows:
 ```text
 [14:30:06] SSH is OPEN until 16:30 (120 min). Close this window or press Ctrl+C to stop.
-[14:30:06] Login as: SERVER01\admin   port: 2222   server IPs: 198.51.100.7
-[14:30:06] Host key: 256 SHA256:7mQ0c3vYf9xTz1LkR8pN2sWbHuE4aJdG6yKoVtCiXqM claude-ssh-host (ED25519)
+[14:30:06] Allowed: 1 key(s) from 203.0.113.10, port 2222; Windows Firewall lets in only these addresses.
+[14:30:06] Session log: C:\Users\admin\AppData\Local\ClaudeSSH\logs\session-20261106-143005.log
+[14:30:06]   everything below with dates, plus what each command printed
 [14:30:06] For the agent: user admin, port 2222, server IPs 198.51.100.7, host key SHA256:7mQ0c3vYf9xTz1LkR8pN2sWbHuE4aJdG6yKoVtCiXqM, open until 16:30
 ```
+Each start writes a new log file, on the server. To open the folder: Win+R,
+`%LOCALAPPDATA%\ClaudeSSH\logs`.
 
 **5. Tell the agent how to connect.** Send it the `For the agent:` line, with what it needs to
 know. For example, to Claude Code:
@@ -240,14 +243,15 @@ For the agent: user admin, port 2222, server IPs 198.51.100.7, host key SHA256:7
 Do not connect if the host key differs. How to work through it:
 https://raw.githubusercontent.com/lotgon/agentSSH/main/AGENT-SETUP.md#working-through-claude-ssh
 ```
-On the first connection, ssh asks to confirm the server's key. It must match the `Host key` line in
-the window (an agent can check it first with `ssh-keyscan -p 2222 198.51.100.7 | ssh-keygen -lf -`;
+On the first connection, ssh asks to confirm the server's key. It must match the `host key` in the
+`For the agent:` line (an agent can check it first with `ssh-keyscan -p 2222 198.51.100.7 | ssh-keygen -lf -`;
 on Windows use `OpenSSH-Win64\ssh-keyscan.exe` from this tool, the one built into Windows fails
 against OpenSSH 10).
 The key is created once and kept, so the fingerprint stays the same from session to session.
 
-The user name is the part of `Login as:` after the backslash (`admin`). This was tested with a
-local account; domain accounts were not tested yet.
+The user name is the Windows account that started the window, without the computer or domain
+name (`admin`); the log keeps the full name. This was tested with a local account; domain
+accounts were not tested yet.
 
 To stop: close the window, or press Ctrl+C in it.
 
@@ -312,7 +316,10 @@ Good to know:
 </p>
 <p align="center"><sub>From a test run. Names, addresses and paths are changed.</sub></p>
 
-- Everything appears as `time #id TAG text`. The `#id` is the same for all lines of one command,
+- At the top: until when SSH is open, who may connect, where the session log goes, and the
+  `For the agent:` line to copy. The full account name, the keys file and the server's addresses
+  go to the log.
+- Everything else appears as `time #id TAG text`. The `#id` is the same for all lines of one command,
   so parallel commands can be told apart. Lines of sshd itself have no `#id`.
 - `SSH` lines come from sshd. The window shows logins (white), failed attempts (red) and anything
   unusual. Its routine lines (connection opened, session started and closed) go to the log only.
@@ -334,12 +341,12 @@ base64 becomes `<base64, N chars>`. The session log has all of it.
 
 **Started processes:** with administrator rights the window subscribes to every process start.
 Without them (`-NoFirewall`), it checks once a second and can miss processes that live less than a
-second.
+second; the window then says so in yellow at the top.
 
 ## The session log
 
-One file per session: `%LOCALAPPDATA%\ClaudeSSH\logs\session-<yyyyMMdd-HHmmss>.log`, a plain text
-file (UTF-8). It is written while the session runs, so it survives even if the window is killed, and it is
+One file per session, on the server: `%LOCALAPPDATA%\ClaudeSSH\logs\session-<yyyyMMdd-HHmmss>.log`,
+a plain text file (UTF-8). The window prints its path when it opens and when it closes. It is written while the session runs, so it survives even if the window is killed, and it is
 kept after the session ends.
 
 It has everything the window shows, nothing cut short and a date on every line, plus:
